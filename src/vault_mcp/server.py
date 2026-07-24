@@ -1,4 +1,4 @@
-"""FastMCP server: semantic search tools over the CX Obsidian vault.
+"""FastMCP server: semantic search tools over a local markdown vault.
 
 Startup kicks off a delta reindex in a background thread, so the server is
 responsive immediately; searches during a reindex use the current index.
@@ -46,18 +46,18 @@ def _format_hits(hits: list[dict]) -> list[dict]:
 
 @mcp.tool()
 def search_vault(query: str, k: int = 8, folder: str | None = None) -> dict:
-    """Semantic search over the CX Obsidian vault (~/Documents/CX).
+    """Semantic search over the configured markdown vault.
 
     Finds notes by meaning, not keywords — use natural-language queries
-    ("pricing psychology for service deals", "how Chris decides big life
-    changes"). Returns the top-k chunks with note path, heading, snippet,
+    ("pricing strategy for service deals", "how we decided on the deployment
+    setup"). Returns the top-k chunks with note path, heading, snippet,
     similarity score, and tags.
 
     Args:
         query: Natural-language search query.
         k: Number of results to return (default 8).
         folder: Optional vault-relative folder prefix to restrict the search,
-            e.g. "Projects/CXVentures" or "Areas/Finances".
+            e.g. "topics" or "Projects/alpha".
     """
     try:
         qvec = embedder.embed_query(query)
@@ -76,7 +76,7 @@ def related_notes(note_path: str, k: int = 8) -> dict:
 
     Averages the note's chunk embeddings and returns the k nearest other
     notes (best-chunk score per note). Accepts a vault-relative path
-    ("Projects/CXVentures/Clients/XRF/STATUS.md") or just a filename —
+    ("Projects/alpha/launch-plan.md") or just a filename —
     ambiguous names return candidates.
 
     Args:

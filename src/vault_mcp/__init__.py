@@ -1,4 +1,4 @@
-"""vault-mcp — semantic search MCP server for the CX Obsidian vault."""
+"""vault-mcp — semantic search MCP server for a local markdown vault."""
 
 import os
 from pathlib import Path

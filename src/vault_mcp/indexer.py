@@ -1,7 +1,7 @@
 """Vault walker, markdown chunker, and delta-reindex logic.
 
-Walks the vault following symlinks (the Finances Wiki and XRF client folders
-are symlinks into other repos) with a realpath cycle guard. Chunks split on
+Walks the vault following symlinks (symlinked folders index like real ones)
+with a realpath cycle guard. Chunks split on
 H1–H3 headings outside code fences; each chunk is embedded as
 "{note title} > {heading path}\\n{body}". Delta reindex: mtime+size stat
 sweep, content-hash confirm, per-file transaction — a crash never leaves a

@@ -33,14 +33,20 @@ for cand in python3.13 python3.12 python3.11 python3; do
     break
   fi
 done
-[ -n "$PY" ] || die "Python 3.11+ not found. Install one: brew install python@3.12"
-echo "Using $PY ($("$PY" --version 2>&1))"
+if [ -n "$PY" ]; then
+  echo "Using $PY ($("$PY" --version 2>&1))"
+elif command -v uv >/dev/null 2>&1; then
+  # uv can download a managed CPython — no system Python needed
+  echo "No system Python 3.11+; using a uv-managed Python 3.12."
+else
+  die "Python 3.11+ not found. Either: brew install python@3.12 — or install uv (curl -LsSf https://astral.sh/uv/install.sh | sh; open a new shell), which provisions Python itself. Then re-run."
+fi
 
 # --- venv + install ---
 say "Installing vault-mcp into $REPO_DIR/.venv"
 cd "$REPO_DIR"
 if command -v uv >/dev/null 2>&1; then
-  [ -d .venv ] || uv venv --python "$PY"
+  [ -d .venv ] || uv venv --python "${PY:-3.12}"
   uv pip install -q -e .
 else
   [ -d .venv ] || "$PY" -m venv .venv

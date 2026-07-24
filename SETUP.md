@@ -14,7 +14,9 @@ cloud calls, no API cost).
 
 1. **macOS** (Linux works too) with **Claude Code** installed (`claude --version` works).
 2. **Python 3.11+** available as `python3`, `python3.11`, `python3.12`, or
-   `python3.13`. If missing: `brew install python@3.12`.
+   `python3.13`. If missing: `brew install python@3.12` — or install
+   [`uv`](https://docs.astral.sh/uv/) (`curl -LsSf https://astral.sh/uv/install.sh | sh`);
+   `setup.sh` will then provision a managed Python itself.
 3. About **1 GB free disk** for Ollama + the embedding model.
 4. The path to the vault — any folder of `.md` files. Referred to below as
    `<VAULT>`. Use an absolute path.

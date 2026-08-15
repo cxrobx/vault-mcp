@@ -1,12 +1,15 @@
 # vault-mcp
 
-Semantic search MCP server for a local markdown vault (Obsidian or any folder
+Hybrid search MCP server for a local markdown vault (Obsidian or any folder
 of `.md` files). Embeds every note locally with Ollama (`nomic-embed-text`,
-768-dim) and exposes meaning-based retrieval to Claude Code (or any MCP
-client). Fully local, zero API cost, no cloud calls.
+768-dim), indexes it for keyword search with SQLite FTS5/BM25, and exposes
+both to Claude Code (or any MCP client). Fully local, zero API cost, no cloud
+calls.
 
 Point it at a vault and your agent can `search_vault("how did we decide on
-the deployment setup")` instead of grepping for keywords.
+the deployment setup")` instead of grepping for keywords — and still find
+`PostGIS` or `nas-tunnel` by exact name, which pure embedding search is
+notoriously bad at.
 
 ## Quickstart
 
@@ -51,20 +54,89 @@ install.
 
 | Tool | What it does |
 |------|--------------|
-| `search_vault(query, k=8, folder=None)` | Semantic top-k over all chunks; `folder` prefix-filters (e.g. `"topics"` or `"Projects/alpha"`). |
-| `related_notes(note_path, k=8)` | Mean of the note's chunk vectors → nearest other notes (best-chunk score per note). |
+| `search_vault(query, k=8, folder=None)` | Hybrid (dense + BM25) top-k over all chunks; `folder` prefix-filters (e.g. `"topics"` or `"Projects/alpha"`). |
+| `related_notes(note_path, k=8)` | Mean of the note's chunk vectors → nearest other notes (best-chunk score per note). Dense only — see below. |
 | `reindex_vault(full=False)` | Delta (or full) reindex now; returns files scanned/changed, chunks embedded, duration. |
-| `vault_stats()` | File/chunk counts, model, last index time, DB size, startup-reindex status. |
+| `vault_stats()` | File/chunk counts, model, last index time, DB size, FTS health, startup-reindex status. |
+
+Each hit carries `retrieval` (`dense` / `lexical` / `hybrid`) saying which leg
+found it, and the response carries `scoring` naming the scale `score` is on.
 
 ## How it works
+
+### Retrieval
+
+Two legs, fused by **Reciprocal Rank Fusion** (`1/(60+rank)` summed per doc):
+
+- **Dense** — cosine over the embedding matrix. Handles meaning, paraphrase,
+  and "notes about X" questions.
+- **Lexical** — SQLite FTS5 `bm25()` over chunk text + tags (weights 1.0 /
+  0.5). Handles exact literals: identifiers, product names, hyphenated slugs.
+
+RRF rather than a weighted sum of the two scores, because BM25 is unbounded
+and corpus-dependent while cosine is [-1, 1] — summing them is just BM25 with
+rounding noise, and the dense leg stops mattering. RRF only compares rank
+positions, so the scales never have to be reconciled.
+
+The lexical leg **ANDs** the query terms, which makes it self-gating: a literal
+lookup (`PostGIS`) matches precisely, while a discursive query has no chunk
+containing all its terms, so the leg returns nothing and search falls back to
+pure dense — the regime where dense was already right.
+
+`scripts/eval_retrieval.py` measures both halves of that trade — run it before
+and after any ranking change. On the author's vault (~450 notes / ~7.9k chunks),
+over 14 auto-discovered rare identifiers:
+
+|  | literal hit@1 |
+|---|---|
+| dense only | 2/14 |
+| **hybrid** | **14/14** |
+
+The choice of connector is what makes or breaks the natural-language side. On a
+curated probe set (14 rare literals / 10 NL queries):
+
+| lexical mode | literal hit@1 | NL top-1 agreement |
+|---|---|---|
+| OR | 13/14 | 1/10 ✗ wrecks NL |
+| AND → OR fallback | 14/14 | 1/10 ✗ fallback fires exactly where OR is worst |
+| **AND** | **14/14** | **9/10** |
+
+An OR over six common words drags in every chunk that merely says "leaving" or
+"retainer"; with the two candidate lists barely overlapping, RRF ties then hand
+rank 1 to that noise.
+
+Query text is never passed to `MATCH` raw. FTS5's query parser only accepts
+bareword alphanumerics, so `nas-tunnel` raises `fts5: syntax error` and
+anything with `:` is read as a column filter; terms are re-quoted into a safe
+expression, which doubles as the injection guard. The **raw** query goes to
+BM25 — not the `search_query: `-prefixed string, which would poison every
+lexical query with two junk tokens.
+
+`related_notes` stays deliberately dense-only: it is note-to-note similarity
+driven by a mean embedding, with no query string to give BM25. Synthesizing a
+pseudo-query from the note's own terms mostly retrieves notes sharing its
+boilerplate (same client, same template, same tag header) rather than its
+meaning.
+
+### Storage
 
 - **Embeddings**: Ollama `POST /api/embed` with nomic task prefixes
   (`search_document: ` at index time, `search_query: ` at query time — the
   prefixes matter for retrieval quality).
 - **Store**: plain SQLite (`data/index.db`, gitignored) with float32 BLOB
-  embeddings, L2-normalized at write. Search is a numpy dot product over the
-  whole chunk matrix — at ~7k chunks that's ~21 MB and <20 ms, no vector
+  embeddings, L2-normalized at write. The dense leg is a numpy dot product over
+  the whole chunk matrix — at ~8k chunks that's ~24 MB and <20 ms, no vector
   extension needed.
+- **FTS index**: an external-content FTS5 table (`chunks_fts`) — postings only,
+  column values read back from `chunks`, so no text is duplicated. Kept in
+  lockstep by insert/update/delete triggers, so the delta reindex maintains it
+  without knowing it exists. Missing or drifted indexes are rebuilt on open;
+  an existing DB upgrades in place in well under a second and **never
+  re-embeds**. `vault_stats()` reports FTS health via the `chunks_fts_docsize`
+  shadow table and FTS5's own `integrity-check` — note that
+  `SELECT count(*) FROM chunks_fts` is a false green, since on an
+  external-content table it is answered from the content table and matches
+  `chunks` even when the index is empty.
 - **Chunking**: split on H1–H3 headings (outside code fences); each chunk is
   embedded as `"{note title} > {heading path}\n{body}"`; oversized sections
   split on paragraph boundaries at ~2000 chars; chunks under 80 chars are
@@ -105,9 +177,10 @@ src/vault_mcp/
   server.py      # FastMCP("vault"), 4 tools, background startup delta reindex
   indexer.py     # vault walk, chunking, delta logic
   embeddings.py  # Ollama /api/embed client (batched, prefixed, clear errors)
-  store.py       # SQLite schema + numpy cosine search
+  store.py       # SQLite schema, FTS5 index, dense + BM25 legs, RRF fusion
 scripts/
-  setup.sh       # idempotent installer: venv → deps → Ollama check → full index
+  setup.sh           # idempotent installer: venv → deps → Ollama check → full index
+  eval_retrieval.py  # literal-recall + NL-regression eval; run around ranking changes
 ```
 
 ## License

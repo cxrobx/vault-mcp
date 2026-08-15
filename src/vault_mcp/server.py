@@ -32,29 +32,39 @@ def _snippet(text: str) -> str:
 
 
 def _format_hits(hits: list[dict]) -> list[dict]:
-    return [
-        {
+    out = []
+    for h in hits:
+        hit = {
             "path": h["path"],
             "heading": h["heading_path"],
             "snippet": _snippet(h["text"]),
             "score": round(h["score"], 4),
             "tags": h["tags"],
         }
-        for h in hits
-    ]
+        # Present only on hybrid search: which leg(s) surfaced the hit, and the
+        # cosine behind it. `score` is an RRF score there — a small number on a
+        # different scale from cosine, comparable only within one result set.
+        if "retrieval" in h:
+            hit["retrieval"] = h["retrieval"]
+        if "cosine" in h:
+            hit["cosine"] = round(h["cosine"], 4)
+        out.append(hit)
+    return out
 
 
 @mcp.tool()
 def search_vault(query: str, k: int = 8, folder: str | None = None) -> dict:
-    """Semantic search over the configured markdown vault.
+    """Hybrid search over the configured markdown vault.
 
-    Finds notes by meaning, not keywords — use natural-language queries
-    ("pricing strategy for service deals", "how we decided on the deployment
-    setup"). Returns the top-k chunks with note path, heading, snippet,
-    similarity score, and tags.
+    Runs two retrieval legs and fuses them, so it handles both ends of the
+    query spectrum: natural-language questions ("pricing strategy for service
+    deals", "how we decided on the deployment setup") are answered by
+    embeddings, and rare literal tokens (identifiers, product names,
+    hyphenated slugs like "nas-tunnel") are answered by BM25 keyword match.
+    Returns the top-k chunks with note path, heading, snippet, score, and tags.
 
     Args:
-        query: Natural-language search query.
+        query: Search query — natural language or a literal term.
         k: Number of results to return (default 8).
         folder: Optional vault-relative folder prefix to restrict the search,
             e.g. "topics" or "Projects/alpha".
@@ -63,8 +73,23 @@ def search_vault(query: str, k: int = 8, folder: str | None = None) -> dict:
         qvec = embedder.embed_query(query)
     except EmbeddingsUnavailable as exc:
         return {"error": str(exc)}
-    hits = store.search(qvec, k=k, folder=folder)
-    result: dict = {"results": _format_hits(hits)}
+    # The RAW query goes to the lexical leg. embed_query() internally prepends
+    # nomic-embed-text's "search_query: " task prefix; that prefix is an
+    # artifact of the embedding model and would poison every BM25 query with
+    # two junk high-frequency tokens.
+    hits = store.search(qvec, k=k, folder=folder, query_text=query)
+    formatted = _format_hits(hits)
+    # `score` changes scale depending on whether the lexical leg fired, so say
+    # which it is. RRF scores are ~1/60 and only comparable within one result
+    # set — without this an agent reads 0.016 as "weak hit" and discards a
+    # perfect keyword match.
+    fused = any(h.get("retrieval") in ("hybrid", "lexical") for h in formatted)
+    result: dict = {
+        "results": formatted,
+        "scoring": "rrf (rank-fused; compare only within this result set)"
+        if fused
+        else "cosine (0-1; lexical leg found no match, dense only)",
+    }
     if not hits and folder:
         result["note"] = f"No indexed notes under folder '{folder}' — check the prefix (case-sensitive)."
     return result
@@ -123,6 +148,7 @@ def vault_stats() -> dict:
         "files_indexed": stats["files"],
         "chunks": stats["chunks"],
         "db_size_mb": round(stats["db_bytes"] / 1e6, 1),
+        "fts": stats["fts"],
         "model": store.get_meta("model"),
         "last_index_time": store.get_meta("last_index_time"),
         "startup_reindex": dict(_startup),

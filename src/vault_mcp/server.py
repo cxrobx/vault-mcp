@@ -1,4 +1,4 @@
-"""FastMCP server: semantic search tools over a local markdown vault.
+"""FastMCP server: semantic search tools over a local markdown/HTML vault.
 
 Startup kicks off a delta reindex in a background thread, so the server is
 responsive immediately; searches during a reindex use the current index.
@@ -11,7 +11,7 @@ from mcp.server.fastmcp import FastMCP
 
 from . import DB_PATH, VAULT_PATH
 from .embeddings import EmbeddingsUnavailable, OllamaEmbedder
-from .indexer import reindex
+from .indexer import mount_status, reindex
 from .store import Store
 
 mcp = FastMCP("vault")
@@ -54,7 +54,11 @@ def _format_hits(hits: list[dict]) -> list[dict]:
 
 @mcp.tool()
 def search_vault(query: str, k: int = 8, folder: str | None = None) -> dict:
-    """Hybrid search over the configured markdown vault.
+    """Hybrid search over the configured vault.
+
+    Covers the vault's markdown and HTML notes, plus the HTML pages of any
+    mounted folder, whose paths start with the mount's name (e.g.
+    "Artifacts/Learnings/…"; vault_stats lists the mounts and where they live).
 
     Runs two retrieval legs and fuses them, so it handles both ends of the
     query spectrum: natural-language questions ("pricing strategy for service
@@ -66,8 +70,8 @@ def search_vault(query: str, k: int = 8, folder: str | None = None) -> dict:
     Args:
         query: Search query — natural language or a literal term.
         k: Number of results to return (default 8).
-        folder: Optional vault-relative folder prefix to restrict the search,
-            e.g. "topics" or "Projects/alpha".
+        folder: Optional folder prefix to restrict the search, e.g. "topics",
+            "Projects/alpha", or a mount name like "Artifacts".
     """
     try:
         qvec = embedder.embed_query(query)
@@ -101,8 +105,8 @@ def related_notes(note_path: str, k: int = 8) -> dict:
 
     Averages the note's chunk embeddings and returns the k nearest other
     notes (best-chunk score per note). Accepts a vault-relative path
-    ("Projects/alpha/launch-plan.md") or just a filename —
-    ambiguous names return candidates.
+    ("Projects/alpha/launch-plan.md", "Artifacts/…/page.html") or just a
+    filename — ambiguous names return candidates.
 
     Args:
         note_path: Vault-relative path or filename of the source note.
@@ -140,11 +144,12 @@ def reindex_vault(full: bool = False) -> dict:
 
 @mcp.tool()
 def vault_stats() -> dict:
-    """Index health: file/chunk counts, embedding model, last index time,
-    DB size, and the status of the startup delta reindex."""
+    """Index health: file/chunk counts, mounted folders, embedding model, last
+    index time, DB size, and the status of the startup delta reindex."""
     stats = store.stats()
     return {
         "vault": str(VAULT_PATH),
+        "mounts": mount_status(),
         "files_indexed": stats["files"],
         "chunks": stats["chunks"],
         "db_size_mb": round(stats["db_bytes"] / 1e6, 1),

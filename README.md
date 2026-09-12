@@ -1,7 +1,8 @@
 # vault-mcp
 
 Hybrid search MCP server for a local markdown vault (Obsidian or any folder
-of `.md` files). Embeds every note locally with Ollama (`nomic-embed-text`,
+of `.md` files), including the HTML pages in it and in any folder you mount
+beside it. Embeds every note locally with Ollama (`nomic-embed-text`,
 768-dim), indexes it for keyword search with SQLite FTS5/BM25, and exposes
 both to Claude Code (or any MCP client). Fully local, zero API cost, no cloud
 calls.
@@ -140,11 +141,19 @@ meaning.
 - **Chunking**: split on H1–H3 headings (outside code fences); each chunk is
   embedded as `"{note title} > {heading path}\n{body}"`; oversized sections
   split on paragraph boundaries at ~2000 chars; chunks under 80 chars are
-  skipped; frontmatter is parsed for tags, not embedded.
-- **Scope**: all `*.md` under the vault, **following symlinks** (symlinked
-  folders index like real ones), with a realpath cycle guard. Excluded:
-  dot-dirs (`.obsidian`, `.smart-env`, `.trash`, `.git`,
-  `.SynologyWorkingDirectory`) and `Other/Templates`.
+  skipped; frontmatter is parsed for tags, not embedded. HTML pages split the
+  same way on `<h1>`–`<h3>`, over the text a reader sees (`<script>`,
+  `<style>`, `<head>`, `<nav>` and comments dropped, each block a paragraph),
+  titled by their `<title>`; a page over 4 MB is kept with no chunks.
+- **Scope**: all `*.md` under the vault, plus its `*.html`/`*.htm` notes
+  except one sitting beside a same-name `.md` (that note's rendering),
+  **following symlinks** (symlinked folders index like real ones), with a
+  realpath cycle guard. Then each mount's HTML pages under its name, listed
+  the way Onyx's Artifacts sidebar lists them: below the project level, a
+  folder holding `index.html` is one page. A page a mount reaches that the
+  vault already gave is skipped. Excluded: dot-dirs (`.obsidian`,
+  `.smart-env`, `.trash`, `.git`, `.SynologyWorkingDirectory`),
+  `node_modules`, `__pycache__`, and `Other/Templates`.
 - **Freshness**: every server start runs a delta reindex in a background
   thread (mtime+size sweep → content-hash confirm → re-embed changed, delete
   removed). Searches during a reindex use the current index. Per-file
@@ -155,6 +164,7 @@ meaning.
 | Var | Default | Notes |
 |-----|---------|-------|
 | `VAULT_MCP_VAULT` | `~/Documents/CX` | Path to your vault — set this. |
+| `VAULT_MCP_MOUNTS` | `Artifacts=~/Documents/Artifacts` | Extra folders indexed beside the vault: `Name=/path` pairs joined by `:`. Their HTML pages appear under `Name/…` (so `folder="Name"` searches just them). A missing folder is skipped; `""` turns mounts off. |
 | `VAULT_MCP_DB` | `<repo>/data/index.db` | One DB per instance; don't share it between two servers. |
 | `VAULT_MCP_OLLAMA` | `http://localhost:11434` | |
 | `VAULT_MCP_MODEL` | `nomic-embed-text` | |

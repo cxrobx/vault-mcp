@@ -487,7 +487,7 @@ class Store:
         if note_path in paths:
             return note_path, []
         q = note_path.strip("/").lower()
-        if not q.endswith(".md"):
+        if Path(q).suffix not in (".md", ".html", ".htm"):
             q += ".md"
         matches = [p for p in paths if p.lower() == q or p.lower().endswith("/" + q)]
         if not matches:

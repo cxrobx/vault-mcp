@@ -218,6 +218,9 @@ and every pick (with its rank) is appended to
 What was decided, what was measured and dropped (a reranking judge), and how to
 read the log: **[docs/launcher.md](docs/launcher.md)**.
 
+Agent files (`CLAUDE.md`, `AGENTS.md`, …) are kept off the typed list unless the
+phrase names one; `search_vault` still returns them.
+
 Install the `j` workflow: `integrations/alfred/install.sh` (copies into
 Alfred's preferences — Alfred does not follow symlinks — and records this
 repo's interpreter; re-run after editing the workflow files).

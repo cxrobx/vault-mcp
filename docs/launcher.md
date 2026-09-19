@@ -103,6 +103,33 @@ pricing change"). None of the five real phrases was one.
 - `query` events with no following `pick` → the target was not on the list.
   That is retrieval or evidence; a judge would not have helped.
 
+## What is in the index, and what was taken out (2026-09-19)
+
+607 documents: the vault (524), `~/clients` (48), the Onyx pages the vault does
+not already give (20), and the proposal sources (15).
+
+**Repo docs were in and came out the day after.** 484 rows — 347 in `docs/`,
+116 top-level `.md` (84 of them `CLAUDE.md` / `README.md` / `CHANGELOG.md` /
+`AGENTS.md`), 21 in `plans/` and `specs/` — which was 44% of the index for a
+class the owner does not open. Four of the eight results in the first real
+screenshot came from it. The redundancy settles it: his own "md on jev
+usecases" returned the vault note #1, the repo's `docs/jev.md` #2 and the Onyx
+page #3 — what is worth re-reading is already filed into the vault or
+Artifacts, and the repo copy is the working copy. `scripts/link-repo-docs.sh`
+and the note-mount machinery stay; putting them back is one config line and a
+~3-minute reindex.
+
+**Agent files stay indexed but off a typed list.** `CLAUDE.md`, `AGENTS.md` and
+their kin are written for an agent and never opened by a person, and they are
+long enough to touch every topic their project touches — with repo docs gone,
+the client folders' own pair took #1 and #2 for "acme dossier". `AGENT_FILES`
+in `launcher.py` drops them from the typed list unless the phrase names one
+("acme claude"), while `search_vault` still returns them, because an agent
+asking about an engagement's posture wants exactly that file.
+
+What the owner actually opens is client deliverables — dossiers, decks, meeting
+notes — which are vault HTML and meeting notes, all still indexed.
+
 ## Open
 
 - **The vocabulary gap.** The fix identified is evidence from sent mail: a

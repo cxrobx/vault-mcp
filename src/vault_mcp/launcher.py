@@ -63,6 +63,11 @@ PAGES_WORDS = {"onyx", "artifacts"}
 
 _DATE_ISO_RE = re.compile(r"(?<!\d)(20\d\d)-(\d\d)-(\d\d)(?!\d)")
 _DATE_US_RE = re.compile(r"(?<!\d)(\d\d)\.(\d\d)\.(\d\d)(?!\d)")
+# Files written FOR an agent, never opened by a person. They stay in the index
+# (an agent may well search for one) but are kept off a typed list unless the
+# phrase asks for them by name — they are long, they touch every topic their
+# project touches, and so they match almost anything.
+AGENT_FILES = {"claude.md", "claude.local.md", "agents.md", "gemini.md", "cursor.md"}
 # Stems that say nothing without the folder they sit in.
 _GENERIC_FOLDERS = {"src", "docs", "doc", "plans", "specs", "build", "guides"}
 _GENERIC_STEMS = {"index", "readme", "claude", "agents", "status", "changelog", "proposal", "sections", "plan", "notes"}
@@ -188,8 +193,13 @@ class Launcher:
         files = self._files()
         parsed = parse(phrase, scope_vocabulary(list(files)), self.page_mounts)
 
+        topic_words = {w.lower().strip(",.;:") for w in parsed.topic.split()}
+        asked_for_agent_file = bool(topic_words & {Path(n).stem.lower() for n in AGENT_FILES})
+
         def allowed(path: str) -> bool:
             if parsed.suffix and not path.lower().endswith(parsed.suffix):
+                return False
+            if not asked_for_agent_file and path.rsplit("/", 1)[-1].lower() in AGENT_FILES:
                 return False
             return self._in_vault(path) if parsed.vault_only else True
 

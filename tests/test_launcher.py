@@ -127,3 +127,29 @@ class NoteMountTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AgentFileTest(unittest.TestCase):
+    def launcher(self, store):
+        with mock.patch("vault_mcp.launcher.mount_status", return_value=[]):
+            return Launcher(store=store, embedder=FakeEmbedder())
+
+    def index(self, tmp: str, names: list[str]) -> Store:
+        store = Store(Path(tmp) / "index.db")
+        vec = np.zeros(EMBED_DIM, dtype=np.float32)
+        vec[0] = 1.0
+        for name in names:
+            store.replace_file(name, 0.0, 1, "h", [{"heading_path": "", "text": "acme engagement posture", "tags": "", "embedding": vec}])
+        return store
+
+    def test_agent_files_are_kept_off_a_typed_list(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = self.index(tmp, ["Clients/Acme/CLAUDE.md", "Clients/Acme/AGENTS.md", "Clients/Acme/engagement-report.html"])
+            _, rows = self.launcher(store).find("acme dossier")
+            self.assertEqual([r["path"] for r in rows], ["Clients/Acme/engagement-report.html"])
+
+    def test_naming_one_brings_it_back(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = self.index(tmp, ["Clients/Acme/CLAUDE.md", "Clients/Acme/engagement-report.html"])
+            _, rows = self.launcher(store).find("acme claude")
+            self.assertIn("Clients/Acme/CLAUDE.md", [r["path"] for r in rows])

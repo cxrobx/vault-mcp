@@ -298,7 +298,7 @@ def alfred_items(phrase: str, parsed: Parsed, rows: list[dict]) -> dict:
                 "type": "file:skipcheck",
                 "quicklookurl": row["abs"],
                 "text": {"copy": row["abs"]},
-                "variables": {"ff_rank": str(rank), "ff_query": phrase, "ff_shown": json.dumps(shown)},
+                "variables": {"pick_rank": str(rank), "pick_query": phrase, "pick_shown": json.dumps(shown)},
             }
         )
     if not items:
@@ -361,10 +361,10 @@ def main(argv: list[str]) -> None:
         log_event(
             {
                 "event": "pick",
-                "query": os.environ.get("ff_query", ""),
-                "rank": int(os.environ.get("ff_rank") or 0),
+                "query": os.environ.get("pick_query", ""),
+                "rank": int(os.environ.get("pick_rank") or 0),
                 "path": path,
-                "shown": json.loads(os.environ.get("ff_shown") or "[]"),
+                "shown": json.loads(os.environ.get("pick_shown") or "[]"),
             }
         )
         open_file(path)

@@ -46,7 +46,7 @@
 				<key>escaping</key>
 				<integer>102</integer>
 				<key>keyword</key>
-				<string>ff</string>
+				<string>j</string>
 				<key>queuedelaycustom</key>
 				<integer>3</integer>
 				<key>queuedelayimmediatelyinitially</key>
@@ -58,7 +58,7 @@
 				<key>runningsubtext</key>
 				<string>Searching…</string>
 				<key>script</key>
-				<string>./ff.sh query "$1"</string>
+				<string>./launcher.sh query "$1"</string>
 				<key>scriptargtype</key>
 				<integer>1</integer>
 				<key>scriptfile</key>
@@ -87,7 +87,7 @@
 				<key>escaping</key>
 				<integer>102</integer>
 				<key>script</key>
-				<string>./ff.sh pick "$1"</string>
+				<string>./launcher.sh pick "$1"</string>
 				<key>scriptargtype</key>
 				<integer>1</integer>
 				<key>scriptfile</key>

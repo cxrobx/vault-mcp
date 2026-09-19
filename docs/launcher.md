@@ -1,6 +1,6 @@
 # The launcher — design, and why it is this small
 
-`src/vault_mcp/launcher.py` plus the `ff` Alfred workflow: type a description
+`src/vault_mcp/launcher.py` plus the `j` Alfred workflow: type a description
 ("acme last meeting", "vault note on relationships"), get the file. The README
 covers how to use and install it. This covers what was decided, what was tried
 and dropped, and what would justify changing it. Built 2026-09-18.

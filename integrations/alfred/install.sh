@@ -20,6 +20,6 @@ fi
 
 dest="$prefs/workflows/user.workflow.6C1B7E52-3F0A-4C57-9C0E-FF00000000FF"
 mkdir -p "$dest"
-cp "$here/info.plist" "$here/ff.sh" "$dest/"
+cp "$here/info.plist" "$here/launcher.sh" "$dest/"
 printf '%s\n' "$python" > "$dest/python-path"
 echo "installed to $dest"

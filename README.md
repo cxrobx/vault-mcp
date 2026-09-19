@@ -218,7 +218,7 @@ and every pick (with its rank) is appended to
 What was decided, what was measured and dropped (a reranking judge), and how to
 read the log: **[docs/launcher.md](docs/launcher.md)**.
 
-Install the `ff` workflow: `integrations/alfred/install.sh` (copies into
+Install the `j` workflow: `integrations/alfred/install.sh` (copies into
 Alfred's preferences — Alfred does not follow symlinks — and records this
 repo's interpreter; re-run after editing the workflow files).
 

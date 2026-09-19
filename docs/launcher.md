@@ -178,7 +178,12 @@ notes — which are vault HTML and meeting notes, all still indexed.
   full-text index (35k messages, 4 ms per query), so keyword + date search over
   email is nearly free. Embedding it is the heavy version and should wait for a
   query that fails without it.
-- **PDFs** are not indexed — no text to embed.
+- **PDFs** are not indexed — no text to embed. One is *openable* though: a
+  Typst source under `<root>/src/` opens its built `<root>/build/<stem>.pdf`
+  when one exists (`rendered_twin`). The source is what the index can read and
+  what a search matches; the PDF is what a person means by "the proposal", and
+  macOS has no app registered for `.typ` at all. The PDF can lag its source —
+  the row keeps the source's date, which is the honest one for "most recent".
 - **Downloads / Desktop are out, deliberately** (declined 2026-09-19). The
   demo's own query, "the pdf I just downloaded", does not work here and is not
   meant to: those rows have a name, an extension and an mtime and no content,

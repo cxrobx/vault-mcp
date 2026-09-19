@@ -221,6 +221,9 @@ read the log: **[docs/launcher.md](docs/launcher.md)**.
 Agent files (`CLAUDE.md`, `AGENTS.md`, …) are kept off the typed list unless the
 phrase names one; `search_vault` still returns them.
 
+↩ opens a vault `.md` in Obsidian, HTML in Onyx, and a Typst source's built PDF
+in place of the source; anything else goes to its default app.
+
 Install the `j` workflow: `integrations/alfred/install.sh` (copies into
 Alfred's preferences — Alfred does not follow symlinks — and records this
 repo's interpreter; re-run after editing the workflow files).

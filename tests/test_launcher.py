@@ -15,7 +15,7 @@ from vault_mcp import indexer
 from vault_mcp.embeddings import EMBED_DIM
 from vault_mcp.indexer import mount_status, walk_vault
 from vault_mcp.launcher import (
-    Launcher, Parsed, doc_date, index_tokens, name_match, name_score, parse, scope_vocabulary,
+    Launcher, Parsed, doc_date, index_tokens, name_match, name_score, parse, rendered_twin, scope_vocabulary,
 )
 from vault_mcp.store import Store
 
@@ -212,3 +212,20 @@ class NamedFirstTest(unittest.TestCase):
         rows = self.rows(names, "acme last seo report", mtimes={"Clients/Acme/STATUS.md": 4e9})
         self.assertEqual(rows[0], "Clients/Acme/engagement-report-2026-07-23.md")
         self.assertNotIn("Clients/Acme/STATUS.md", rows[:2])
+
+
+class OpenTest(unittest.TestCase):
+    def test_a_typst_source_opens_its_built_pdf(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "globex"
+            (root / "src").mkdir(parents=True)
+            (root / "build").mkdir()
+            src = root / "src" / "proposal.typ"
+            src.write_text("x")
+            self.assertIsNone(rendered_twin(src))          # nothing built yet
+            (root / "build" / "proposal.pdf").write_text("%PDF")
+            self.assertEqual(rendered_twin(src), root / "build" / "proposal.pdf")
+
+    def test_other_files_have_no_twin(self):
+        self.assertIsNone(rendered_twin(Path("/a/b/notes.md")))
+        self.assertIsNone(rendered_twin(Path("/a/loose.typ")))

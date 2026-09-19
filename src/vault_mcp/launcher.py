@@ -419,9 +419,24 @@ def log_event(event: dict) -> None:
         pass  # a full disk must not break the launcher
 
 
+def rendered_twin(path: Path) -> Path | None:
+    """The built artifact a source file stands for: <root>/src/x.typ -> <root>/build/x.pdf.
+
+    A Typst source is what the index can read and what a search matches, but it
+    is not what a person means by "the proposal" — and macOS has no app
+    registered for .typ at all, so opening it only raises a picker. The PDF can
+    be older than its source; the row still carries the source's date, which is
+    the honest one for "most recent".
+    """
+    if path.suffix.lower() != ".typ" or path.parent.name != "src":
+        return None
+    pdf = path.parent.parent / "build" / f"{path.stem}.pdf"
+    return pdf if pdf.is_file() else None
+
+
 def open_file(abs_path: str) -> None:
-    """Vault markdown in Obsidian, HTML in Onyx, anything else in its default app."""
-    path = Path(abs_path)
+    """Vault markdown in Obsidian, HTML in Onyx, a built artifact over its source, else the default app."""
+    path = rendered_twin(Path(abs_path)) or Path(abs_path)
     suffix = path.suffix.lower()
     try:
         in_vault = path.resolve().is_relative_to(VAULT_PATH.resolve())
@@ -431,9 +446,12 @@ def open_file(abs_path: str) -> None:
         target = ["open", "obsidian://open?path=" + urllib.parse.quote(str(path), safe="")]
     elif suffix in HTML_SUFFIXES:
         target = ["open", "-b", "com.cx.onyx", str(path)]
+    elif suffix == ".typ":
+        # No registered app for the type; -t hands it to the default text editor.
+        target = ["open", "-t", str(path)]
     else:
         target = ["open", str(path)]
-    if subprocess.run(target, check=False).returncode != 0 and target[1] == "-b":
+    if subprocess.run(target, check=False).returncode != 0 and target[1] in ("-b", "-t"):
         subprocess.run(["open", str(path)], check=False)
 
 

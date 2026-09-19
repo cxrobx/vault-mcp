@@ -115,5 +115,12 @@ pricing change"). None of the five real phrases was one.
   full-text index (35k messages, 4 ms per query), so keyword + date search over
   email is nearly free. Embedding it is the heavy version and should wait for a
   query that fails without it.
-- **PDFs** are not indexed.
+- **PDFs** are not indexed — no text to embed.
+- **Downloads / Desktop are out, deliberately** (declined 2026-09-19). The
+  demo's own query, "the pdf I just downloaded", does not work here and is not
+  meant to: those rows have a name, an extension and an mtime and no content,
+  so they are a second metadata-only corpus, and ~1,100 download filenames
+  would outnumber the whole document index. A file you downloaded minutes ago
+  is already a sorted folder or the launcher's own file search. The gap this
+  tool fills is a *document* you cannot name.
 - **Multi-word folder names** ("Reading Notes") cannot be scope words.

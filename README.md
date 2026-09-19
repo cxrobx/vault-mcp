@@ -215,6 +215,9 @@ A cold call is ~0.3 s on a 1,100-file index, so there is no daemon. Every run
 and every pick (with its rank) is appended to
 `~/.local/state/vault-mcp/launcher.jsonl` — read that before adding a reranker.
 
+What was decided, what was measured and dropped (a reranking judge), and how to
+read the log: **[docs/launcher.md](docs/launcher.md)**.
+
 Install the `ff` workflow: `integrations/alfred/install.sh` (copies into
 Alfred's preferences — Alfred does not follow symlinks — and records this
 repo's interpreter; re-run after editing the workflow files).

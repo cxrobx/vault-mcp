@@ -1,0 +1,119 @@
+# The launcher — design, and why it is this small
+
+`src/vault_mcp/launcher.py` plus the `ff` Alfred workflow: type a description
+("acme last meeting", "vault note on relationships"), get the file. The README
+covers how to use and install it. This covers what was decided, what was tried
+and dropped, and what would justify changing it. Built 2026-09-18.
+
+## Where it came from
+
+The prompt was a per-keystroke "predictive launcher" demo: fuzzy-filter a list
+of apps and files to ~13 rows, send them with the typed text to a hosted
+decision model on every keystroke, blend its probabilities with the fuzzy score.
+The demo's best query was "the pdf I just downloaded" — a file found by its
+facts, not its name.
+
+Three things changed the shape before any code:
+
+1. **The useful queries were about documents, not apps.** Apps, toggles and the
+   user's own short keywords are already faster by name. What no tool answered
+   was "acme last seo report", "most recent globex proposal", "the agent
+   debugging guide in onyx", "md on jev usecases" — a scope, a topic, sometimes
+   a recency word, across the vault, the HTML artifacts, client folders and the
+   docs inside code repos.
+2. **Those are whole phrases, not keystrokes.** Run on a typing pause. The
+   sub-150 ms budget that justified a hosted decision model went away.
+3. **The retriever already existed here.** Hybrid dense + BM25 over the vault.
+   What was missing was coverage (documents outside the vault) and a front end
+   that understands routing words.
+
+So it is a module in this repo rather than a new one: one index, one reindex
+path, and `search_vault` gains the wider corpus too. A second repo would have
+meant a second index merged at query time — which is exactly what made the
+first test noisy (half of every shortlist came from the wrong corpus).
+
+## What a test on real queries showed
+
+A scratch index of the new material, queried beside a copy of the live one,
+five real phrases:
+
+| Finding | Consequence |
+|---|---|
+| Four of five targets were already in the top three with plain hybrid retrieval. | No model is needed to *find* them. |
+| Routing words poison the topic. "vault note on relationships" retrieved notes about vaults and dropped the target to #9; "relationships" alone put it at #1–4. "acme last seo report" → #7; "acme seo report" → #1. | Parse scope / recency / kind off the phrase **before** embedding it. Plain code, a word list. |
+| The fifth target was not in the top 30 under any phrasing. It was indexed, and was #1 for its own words — the file calls itself an "oversight review deck"; the person calls it "the SEO report". | A vocabulary gap. No reranker can fix it: a judge never sees a row the retriever dropped. Only more evidence on the row can (see *Open*). |
+| Inside one client's folder everything embeds alike — meeting notes, the status page and the actual proposal within ~0.05 cosine for "globex proposal". | "Newest of the best N matches" returns the newest meeting note. Recency needs a different pool (below). |
+
+## The design
+
+```
+phrase ─► parse ─► topic + scope folders + recent? + suffix
+                      │
+                      ├─ not recent ─► hybrid search within scope ─► best chunk per file
+                      └─ recent     ─► files in scope whose PATH carries a topic word
+                                       ─► by date (filename date, else mtime)
+                                       ─► padded with the plain topic order
+```
+
+- **Routing words are read from the leading and trailing runs only.** "pricing
+  for last mile delivery" keeps its "last".
+- **Scopes come from the index, not a list.** Any single-word folder name is a
+  scope if some folder of that name holds 8+ files; then every folder of that
+  name is in it (a client's 3-file proposal folder belongs to the client's
+  scope). The threshold exists because a small folder's name is usually just
+  the topic ("jev" is a two-file folder *and* what you are asking about).
+  Nothing personal is hard-coded, which matters in a public repo.
+- **A scope word stays in the topic.** Harmless inside the scope, and the
+  unscoped retry (when the scope has nothing on the topic) still knows what was
+  asked.
+- **Recency pools by path, not by match strength** — the fourth finding above.
+  What says a file *is* a proposal or a meeting is its name and its folders.
+- **Dates: filename first** (`2026-09-01`, `09.01.26`), else mtime, computed at
+  query time — no schema change. A git-log fallback was planned and dropped:
+  on a working laptop mtime is honest enough, and the log will say if not.
+- **No daemon.** A cold call — interpreter, 110 MB index load, query embedding,
+  search — measured 0.28 s. The plan said "daemon only if over 400 ms".
+- **Not an MCP tool, and nothing in the code is named `find`.** Agents keep four
+  tools; one that wants this behaviour passes `folder=` to `search_vault`. Two
+  tools called "find" and "search" is the confusion to avoid.
+
+## The judge that was not built
+
+The original idea put a model after retrieval to pick the winner. Measured on
+the hard case (30 newest rows of one client folder, titles + dates, "which is
+the last SEO report?"):
+
+| Judge | Result |
+|---|---|
+| Small subscription model via CLI | 13–16 s per call (stripping startup cut local CPU 8.8 s → 0.7 s and barely moved the wall clock, so the wait is model-side), **and it picked the wrong row**. |
+| Any judge, in principle | The same wrong row. The titles do not contain the answer — "weak judgment = missing evidence". |
+| Hosted decision model | Fast enough, but the rows are client document titles and the vendor publishes no deletion window. The owner had reverted an email-triage integration with the same vendor the same day on those grounds. Ruled out for client-scoped rows, which are the valuable ones. |
+
+So version 1 ships without one, and **logs every run and every pick with its
+rank** (`~/.local/state/vault-mcp/launcher.jsonl`). A judge earns its place only
+where the evidence is already on the row and code still cannot rank it —
+exclusions and comparisons ("the proposal, not the draft", "the one before the
+pricing change"). None of the five real phrases was one.
+
+### Reading the log, after a couple of weeks of use
+
+- Pick rank mostly 1–3 → done. Leave it alone.
+- Picks at rank 4–8 that share a shape (exclusions, comparisons) → that is the
+  judge's test set. Try a local model first (~1 s, nothing leaves the machine).
+- `query` events with no following `pick` → the target was not on the list.
+  That is retrieval or evidence; a judge would not have helped.
+
+## Open
+
+- **The vocabulary gap.** The fix identified is evidence from sent mail: a
+  document is "the report" because it was sent to the client, and the email's
+  subject line carries the person's words where the filename does not. Who,
+  when and subject, attached to the row of every linked document. On hold by
+  the owner's call, with email search generally. Unchecked: how hosted links in
+  an email map back to source files.
+- **Email as a corpus.** The mail client's local database already has a
+  full-text index (35k messages, 4 ms per query), so keyword + date search over
+  email is nearly free. Embedding it is the heavy version and should wait for a
+  query that fails without it.
+- **PDFs** are not indexed.
+- **Multi-word folder names** ("Reading Notes") cannot be scope words.

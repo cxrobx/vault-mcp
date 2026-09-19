@@ -53,6 +53,12 @@ TEXT_SUFFIXES = tuple(
     )
     if s
 )
+# Index paths to leave out, as fnmatch globs against the index-relative path
+# ("Proposals/*/src/theme.typ"). NOTE fnmatch's "*" spans "/", so one star is
+# enough to cross folders and "Name/*" excludes a whole subtree.
+EXCLUDE_GLOBS = tuple(
+    g for g in (raw.strip() for raw in _setting("VAULT_MCP_EXCLUDE", "exclude", "").split(os.pathsep)) if g
+)
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DB_PATH = Path(_setting("VAULT_MCP_DB", "db", str(REPO_ROOT / "data" / "index.db"))).expanduser()
 OLLAMA_URL = _setting("VAULT_MCP_OLLAMA", "ollama", "http://localhost:11434")

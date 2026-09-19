@@ -9,6 +9,7 @@ stat sweep, content-hash confirm, per-file transaction — a crash never leaves
 a file half-indexed.
 """
 
+import fnmatch
 import hashlib
 import html
 import os
@@ -21,7 +22,7 @@ from pathlib import Path
 import numpy as np
 import yaml
 
-from . import MOUNTS_SPEC, NOTE_MOUNTS_SPEC, TEXT_SUFFIXES, VAULT_PATH
+from . import EXCLUDE_GLOBS, MOUNTS_SPEC, NOTE_MOUNTS_SPEC, TEXT_SUFFIXES, VAULT_PATH
 from .embeddings import EMBED_DIM, OllamaEmbedder
 from .store import Store
 
@@ -90,10 +91,16 @@ def mount_status(
     return out
 
 
+def excluded(rel: str, globs: tuple[str, ...] = ()) -> bool:
+    """Whether an index path matches one of the configured exclusion globs."""
+    return any(fnmatch.fnmatchcase(rel, g) for g in globs)
+
+
 def walk_vault(
     vault: Path = VAULT_PATH,
     mounts: list[tuple[str, Path]] | None = None,
     note_mounts: list[tuple[str, Path]] | None = None,
+    exclude: tuple[str, ...] | None = None,
 ) -> dict[str, Path]:
     """Map index path -> absolute path for every in-scope file.
 
@@ -112,11 +119,14 @@ def walk_vault(
     Inside the vault nothing changes: only the folder cycle guard applies, so a
     note symlinked to another note keeps both addresses, as it always has.
     """
+    globs = EXCLUDE_GLOBS if exclude is None else exclude
     files: dict[str, Path] = {}
     visited: set[Path] = set()
     seen: set[Path] = set()
 
     def _add(rel: str, entry: Path, mounted: bool) -> None:
+        if excluded(rel, globs):
+            return
         try:
             real = entry.resolve()
         except OSError:
@@ -147,7 +157,12 @@ def walk_vault(
         for entry in entries:
             rel_child = f"{rel}/{entry.name}" if rel else entry.name
             if entry.is_dir():
-                if entry.name.startswith(".") or entry.name in EXCLUDE_DIR_NAMES or rel_child in EXCLUDE_REL_PATHS:
+                if (
+                    entry.name.startswith(".")
+                    or entry.name in EXCLUDE_DIR_NAMES
+                    or rel_child in EXCLUDE_REL_PATHS
+                    or excluded(rel_child + "/", globs)
+                ):
                     continue
                 _walk(entry, rel_child, depth + 1, mounted, pages)
             elif not entry.is_file():

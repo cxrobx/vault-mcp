@@ -167,6 +167,7 @@ meaning.
 | `VAULT_MCP_MOUNTS` | `Artifacts=~/Documents/Artifacts` | Extra folders indexed beside the vault: `Name=/path` pairs joined by `:`. Their HTML pages appear under `Name/…` (so `folder="Name"` searches just them). A missing folder is skipped; `""` turns mounts off. |
 | `VAULT_MCP_NOTE_MOUNTS` | *(none)* | Same `Name=/path` shape, but walked the way the vault is: markdown **and** HTML at any depth. For documents that live outside the vault — a client folder, or the folder of repo docs that `scripts/link-repo-docs.sh` builds. |
 | `VAULT_MCP_TEXT_SUFFIXES` | *(none)* | Extra plain-text suffixes a note mount indexes beside `.md`, e.g. `.typ`. |
+| `VAULT_MCP_EXCLUDE` | *(none)* | Index paths to leave out, as fnmatch globs (`Proposals/*/src/theme.typ`). Note `*` spans `/`, so `Name/*` excludes a whole subtree. |
 | `VAULT_MCP_DB` | `<repo>/data/index.db` | One DB per instance; don't share it between two servers. |
 | `VAULT_MCP_OLLAMA` | `http://localhost:11434` | |
 | `VAULT_MCP_MODEL` | `nomic-embed-text` | |

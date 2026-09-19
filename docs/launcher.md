@@ -166,6 +166,26 @@ asking about an engagement's posture wants exactly that file.
 What the owner actually opens is client deliverables — dossiers, decks, meeting
 notes — which are vault HTML and meeting notes, all still indexed.
 
+## Excluding noise (2026-09-19)
+
+The proposal folders showed why "drop the file type" is usually the wrong cut.
+`globex proposal` returned `theme.typ` and `sections.typ` alongside the real one,
+and the obvious fix was to stop indexing `.typ`. But of the three files in a
+proposal's `src/`, **one is the document** — `proposal.typ`, 17 KB of summary,
+scope and pricing, and the only local copy of that text, since the built PDF is
+not indexed — while `sections.typ` is a macro library and `theme.typ` is colour
+constants. Dropping the suffix would have thrown out the one file worth
+searching to be rid of the two beside it.
+
+So `VAULT_MCP_EXCLUDE` / `exclude` takes fnmatch globs against the index path,
+and the noise is named directly (the two partials, plus `_template`, a skeleton
+rather than a proposal). 11 rows out, nothing re-embedded. The lever is general:
+generated output under a client folder is the next thing it will be pointed at.
+
+**The rule this suggests:** a file type is rarely the unit of noise. The unit is
+a *role* — code beside a document, a template, generated output — and it is
+usually one glob.
+
 ## Open
 
 - **The vocabulary gap.** The fix identified is evidence from sent mail: a

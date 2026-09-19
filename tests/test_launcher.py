@@ -229,3 +229,21 @@ class OpenTest(unittest.TestCase):
     def test_other_files_have_no_twin(self):
         self.assertIsNone(rendered_twin(Path("/a/b/notes.md")))
         self.assertIsNone(rendered_twin(Path("/a/loose.typ")))
+
+
+class ExcludeTest(unittest.TestCase):
+    def test_globs_drop_files_and_whole_subtrees(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "vault").mkdir()
+            for rel in ("globex/src/proposal.typ", "globex/src/theme.typ", "_template/src/proposal.typ"):
+                (root / "ext" / rel).parent.mkdir(parents=True, exist_ok=True)
+                (root / "ext" / rel).write_text("x" * 200)
+            with mock.patch.object(indexer, "TEXT_SUFFIXES", (".typ",)):
+                kept = indexer.walk_vault(
+                    root / "vault",
+                    mounts=[],
+                    note_mounts=[("Proposals", root / "ext")],
+                    exclude=("Proposals/*/src/theme.typ", "Proposals/_template/*"),
+                )
+            self.assertEqual(sorted(kept), ["Proposals/globex/src/proposal.typ"])

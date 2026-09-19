@@ -14,7 +14,9 @@ import numpy as np
 from vault_mcp import indexer
 from vault_mcp.embeddings import EMBED_DIM
 from vault_mcp.indexer import mount_status, walk_vault
-from vault_mcp.launcher import Launcher, Parsed, doc_date, parse, scope_vocabulary
+from vault_mcp.launcher import (
+    Launcher, Parsed, doc_date, index_tokens, name_match, name_score, parse, scope_vocabulary,
+)
 from vault_mcp.store import Store
 
 VOCAB = {"acme": ["Clients/Acme"], "globex": ["Clients/Globex"], "jev": []}
@@ -153,3 +155,60 @@ class AgentFileTest(unittest.TestCase):
             store = self.index(tmp, ["Clients/Acme/CLAUDE.md", "Clients/Acme/engagement-report.html"])
             _, rows = self.launcher(store).find("acme claude")
             self.assertIn("Clients/Acme/CLAUDE.md", [r["path"] for r in rows])
+
+
+class NameMatchTest(unittest.TestCase):
+    def test_a_prefix_reaches_the_whole_word(self):
+        own, folders = index_tokens("Clients/Acme/engagement-report.html", "The Acme Engagement Dossier")
+        self.assertEqual(name_match(["doss"], own, folders), 2)
+        self.assertEqual(name_match(["dossier"], own, folders), 2)
+        self.assertEqual(name_match(["dossiers"], own, folders), 0)
+
+    def test_folders_place_a_file_but_do_not_name_it(self):
+        own, folders = index_tokens("Clients/Acme/Meetings/2026-09-02-sync.md", "2026-09-02-sync")
+        self.assertEqual(name_match(["meeting"], own, folders), 1)
+        self.assertEqual(name_match(["sync"], own, folders), 2)
+        self.assertEqual(name_match(["meeting", "sync"], own, folders), 2)
+        self.assertEqual(name_match(["meeting", "budget"], own, folders), 0)
+
+
+class NamedFirstTest(unittest.TestCase):
+    def rows(self, names: dict[str, str], phrase: str, mtimes: dict[str, float] | None = None):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(Path(tmp) / "index.db")
+            vec = np.zeros(EMBED_DIM, dtype=np.float32)
+            vec[0] = 1.0
+            for path, title in names.items():
+                store.replace_file(
+                    path, (mtimes or {}).get(path, 0.0), 1, "h",
+                    [{"heading_path": "", "text": "the dossier is discussed at length here", "tags": "", "embedding": vec}],
+                    title=title,
+                )
+            with mock.patch("vault_mcp.launcher.mount_status", return_value=[]):
+                launcher = Launcher(store=store, embedder=FakeEmbedder())
+            return [r["path"] for r in launcher.find(phrase)[1]]
+
+    def test_the_file_named_by_the_words_beats_the_file_that_discusses_them(self):
+        rows = self.rows(
+            {"Clients/Acme/STATUS.md": "STATUS", "Clients/Acme/engagement-report.html": "Acme Engagement Dossier"},
+            "acme doss",
+        )
+        self.assertEqual(rows[0], "Clients/Acme/engagement-report.html")
+
+    def test_last_is_a_question_about_time_not_about_titles(self):
+        # "acme" has to name a folder big enough to be a scope word, or it
+        # stays in the topic and "last" is never at an end to be read.
+        names = {f"Clients/Acme/filler-{i}.md": f"filler-{i}" for i in range(8)}
+        names["Clients/Acme/Meetings/old Acme Meeting Notes.md"] = "old Acme Meeting Notes"
+        names["Clients/Acme/Meetings/2026-09-02-preread.md"] = "2026-09-02-preread"
+        rows = self.rows(names, "acme last meeting")
+        self.assertEqual(rows[0], "Clients/Acme/Meetings/2026-09-02-preread.md")
+
+    def test_a_recency_pool_gathers_on_any_word_not_all_of_them(self):
+        names = {f"Clients/Acme/filler-{i}.md": f"filler-{i}" for i in range(8)}
+        names["Clients/Acme/STATUS.md"] = "STATUS"                                  # neither word
+        names["Clients/Acme/Audit/technical-seo-baseline-2026-05-05.md"] = "technical-seo-baseline-2026-05-05"
+        names["Clients/Acme/engagement-report-2026-07-23.md"] = "engagement-report-2026-07-23"
+        rows = self.rows(names, "acme last seo report", mtimes={"Clients/Acme/STATUS.md": 4e9})
+        self.assertEqual(rows[0], "Clients/Acme/engagement-report-2026-07-23.md")
+        self.assertNotIn("Clients/Acme/STATUS.md", rows[:2])

@@ -48,7 +48,11 @@ CREATE TABLE IF NOT EXISTS files (
     path         TEXT PRIMARY KEY,
     mtime        REAL NOT NULL,
     size         INTEGER NOT NULL,
-    content_hash TEXT NOT NULL
+    content_hash TEXT NOT NULL,
+    -- What the document calls itself: an HTML page's <title>, a note's
+    -- filename. Stored because a person searching by name needs every title
+    -- matchable, not just the handful a content search already surfaced.
+    title        TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS chunks (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -155,6 +159,8 @@ class Store:
         with closing(self._connect()) as conn:
             conn.executescript(SCHEMA)
             conn.executescript(FTS_SCHEMA)
+            if "title" not in {r[1] for r in conn.execute("PRAGMA table_info(files)")}:
+                conn.execute("ALTER TABLE files ADD COLUMN title TEXT NOT NULL DEFAULT ''")
         self._migrate_fts()
 
     def _connect(self) -> sqlite3.Connection:
@@ -215,14 +221,17 @@ class Store:
 
     # ---- writes (indexer) ----------------------------------------------
 
-    def replace_file(self, path: str, mtime: float, size: int, content_hash: str, chunks: list[dict]) -> None:
+    def replace_file(
+        self, path: str, mtime: float, size: int, content_hash: str, chunks: list[dict], title: str = ""
+    ) -> None:
         """Upsert a file row and atomically replace its chunks."""
         with closing(self._connect()) as conn, conn:
             conn.execute(
-                """INSERT INTO files(path, mtime, size, content_hash) VALUES(?,?,?,?)
+                """INSERT INTO files(path, mtime, size, content_hash, title) VALUES(?,?,?,?,?)
                    ON CONFLICT(path) DO UPDATE SET
-                     mtime=excluded.mtime, size=excluded.size, content_hash=excluded.content_hash""",
-                (path, mtime, size, content_hash),
+                     mtime=excluded.mtime, size=excluded.size,
+                     content_hash=excluded.content_hash, title=excluded.title""",
+                (path, mtime, size, content_hash, title),
             )
             conn.execute("DELETE FROM chunks WHERE file_path=?", (path,))
             conn.executemany(
@@ -252,6 +261,17 @@ class Store:
         return {r[0]: (r[1], r[2], r[3]) for r in rows}
 
     # ---- meta -----------------------------------------------------------
+
+    def set_titles(self, titles: dict[str, str]) -> None:
+        """Backfill titles onto rows indexed before they were stored."""
+        with closing(self._connect()) as conn, conn:
+            conn.executemany("UPDATE files SET title=? WHERE path=?", [(t, p) for p, t in titles.items()])
+
+    def file_index(self) -> dict[str, tuple[float, str]]:
+        """path -> (mtime, title) for every indexed file. The launcher's whole corpus."""
+        with closing(self._connect()) as conn:
+            rows = conn.execute("SELECT path, mtime, title FROM files").fetchall()
+        return {r[0]: (r[1], r[2]) for r in rows}
 
     def get_meta(self, key: str) -> str | None:
         with closing(self._connect()) as conn:

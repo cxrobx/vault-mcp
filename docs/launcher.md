@@ -77,6 +77,42 @@ phrase ─► parse ─► topic + scope folders + recent? + suffix
   tools; one that wants this behaviour passes `folder=` to `search_vault`. Two
   tools called "find" and "search" is the confusion to avoid.
 
+## The name leg (2026-09-19)
+
+Typing `acme doss` put the client's long status page first and the file
+actually called "Engagement Dossier" second. Two causes, both structural:
+
+1. **Nothing matched a partial word.** `build_fts_query` quotes every term, and
+   FTS5 has no prefix matching there, so `"doss"` matched **zero** rows — the
+   lexical leg vanished and the search silently degraded to dense-only. A
+   phrase is typed a character at a time, so this is the normal case, not an
+   edge one. Measured: `doss` → 0 lexical hits, `dossier` → 50.
+2. **Titles were not stored.** The index held chunks; a file's title only ever
+   existed inside a chunk's embedding prefix. Nothing could match "the document
+   *called* X" — and a status page that mentions the dossier will always beat
+   the dossier on content, because the dossier's name is one line of the status
+   page and the subject is the whole of it.
+
+So `files` gained a `title` column (an HTML `<title>`, else the filename),
+backfilled by reading each file's head once — 607 files in ~0.5 s, no
+re-embedding — and the launcher gained a leg that ranks by what a file is
+*called* rather than what it says:
+
+- `index_tokens` splits a file's **own** words (title + filename) from its
+  **folders'** words. A client folder's name is shared by everything in it, so
+  it places a file; only its own name identifies it.
+- `name_match` — every term must hit, as a prefix, and at least one in the
+  file's own name. This is identification, and it orders ahead of content.
+- `name_score` — graded, any term, 2 for own / 1 for folder. This is
+  *gathering*, used by the recency pool: "seo report" must reach both the SEO
+  baseline and the engagement report, and neither carries both words.
+
+**Date still wins inside a recency phrase.** The first cut sorted the recency
+pool by match strength first and a 2026-04 file titled "Acme Meeting Notes"
+beat every newer file in `Meetings/`. "Last" is a question about time: among
+the files the words fit, the newest is the answer, and strength only breaks a
+tie on the same date.
+
 ## The judge that was not built
 
 The original idea put a model after retrieval to pick the winner. Measured on

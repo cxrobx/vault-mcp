@@ -61,6 +61,7 @@ KIND_WORDS = {"md": ".md", "markdown": ".md", "html": ".html", "page": ".html"}
 VAULT_WORDS = {"vault", "obsidian"}
 PAGES_WORDS = {"onyx", "artifacts"}
 
+_TOKEN_RE = re.compile(r"[0-9a-z]+")
 _DATE_ISO_RE = re.compile(r"(?<!\d)(20\d\d)-(\d\d)-(\d\d)(?!\d)")
 _DATE_US_RE = re.compile(r"(?<!\d)(\d\d)\.(\d\d)\.(\d\d)(?!\d)")
 # Files written FOR an agent, never opened by a person. They stay in the index
@@ -152,6 +153,55 @@ def parse(phrase: str, vocab: dict[str, list[str]], page_mounts: list[str]) -> P
     return parsed
 
 
+def index_tokens(rel_path: str, title: str) -> tuple[frozenset[str], frozenset[str]]:
+    """The words a person could call this file by: (its own, its folders').
+
+    Its own are the title and the filename — a document named "Engagement
+    Dossier" is what someone typing "dossier" means. Its folders are weaker: a
+    whole client folder shares them, so they place a file rather than name it.
+    """
+    own = f"{title} {Path(rel_path).stem}"
+    folders = " ".join(Path(rel_path).parts[:-1])
+    return frozenset(_TOKEN_RE.findall(own.lower())), frozenset(_TOKEN_RE.findall(folders.lower()))
+
+
+def name_match(terms: list[str], own: frozenset[str], folders: frozenset[str]) -> int:
+    """0 = not named by these words, 1 = its folders carry them, 2 = its own name does.
+
+    Every term must match, and a term matches a token it is a PREFIX of — the
+    phrase is typed a character at a time, so "doss" has to reach "Dossier"
+    before the last two letters arrive. Rank 2 needs at least one term in the
+    file's own name, or every file in a client folder would be "named" by the
+    client's word alone.
+    """
+    if not terms:
+        return 0
+    strong = False
+    for term in terms:
+        if any(t.startswith(term) for t in own):
+            strong = True
+        elif not any(t.startswith(term) for t in folders):
+            return 0
+    return 2 if strong else 1
+
+
+def name_score(terms: list[str], own: frozenset[str], folders: frozenset[str]) -> int:
+    """How much of these words the file carries: 2 per term in its own name, 1 per term in its folders.
+
+    The graded companion to `name_match`. Naming a file demands every word;
+    gathering the files a phrase is ABOUT does not — "seo report" has to reach
+    both the SEO baseline and the engagement report, neither of which carries
+    both words.
+    """
+    total = 0
+    for term in terms:
+        if any(t.startswith(term) for t in own):
+            total += 2
+        elif any(t.startswith(term) for t in folders):
+            total += 1
+    return total
+
+
 def doc_date(rel_path: str, mtime: float) -> date:
     """The date a document is about: one in its filename, else when it last changed."""
     name = rel_path.rsplit("/", 1)[-1]
@@ -178,7 +228,10 @@ class Launcher:
         self.page_mounts = [m["name"] for m in mounts if m["kind"] == "pages"]
 
     def _files(self) -> dict[str, float]:
-        return {path: stat[0] for path, stat in self.store.all_file_stats().items()}
+        return {path: mtime for path, (mtime, _) in self.store.file_index().items()}
+
+    def _tokens(self) -> dict[str, tuple[frozenset[str], frozenset[str]]]:
+        return {p: index_tokens(p, title) for p, (_, title) in self.store.file_index().items()}
 
     def abs_path(self, rel_path: str) -> Path:
         head, _, rest = rel_path.partition("/")
@@ -191,6 +244,7 @@ class Launcher:
 
     def find(self, phrase: str, k: int = SHOWN) -> tuple[Parsed, list[dict]]:
         files = self._files()
+        tokens = self._tokens()
         parsed = parse(phrase, scope_vocabulary(list(files)), self.page_mounts)
 
         topic_words = {w.lower().strip(",.;:") for w in parsed.topic.split()}
@@ -204,13 +258,14 @@ class Launcher:
             return self._in_vault(path) if parsed.vault_only else True
 
         ranked = self._topic_ranked(parsed, allowed) if parsed.topic else []
+        ranked = self._named_first(parsed, ranked, files, tokens, allowed)
         if not ranked and parsed.folders and parsed.topic:
             # The scope matched nothing on this topic. Asking again without it
             # beats an empty list: the scope word is still in the topic.
             ranked = self._topic_ranked(Parsed(topic=parsed.topic), allowed)
 
         if parsed.recent:
-            ranked = self._by_date(parsed, ranked, files, allowed)
+            ranked = self._by_date(parsed, ranked, files, tokens, allowed)
 
         rows = []
         for row in ranked[:k]:
@@ -225,7 +280,46 @@ class Launcher:
             )
         return parsed, rows
 
-    def _by_date(self, parsed: Parsed, ranked: list[dict], files: dict[str, float], allowed) -> list[dict]:
+    def _terms(self, parsed: Parsed) -> list[str]:
+        """The topic's own words: what is left once the scope words are taken out."""
+        scope = set(parsed.scope_words)
+        return [w for w in (t.lower().strip(",.;:") for t in parsed.topic.split()) if w not in scope and len(w) > 1]
+
+    def _named_first(
+        self, parsed: Parsed, ranked: list[dict], files: dict[str, float], tokens: dict, allowed
+    ) -> list[dict]:
+        """Put the files these words NAME above the files that merely discuss them.
+
+        Content search cannot do this. A long status page mentioning the
+        dossier outranks the dossier itself, because the dossier's own name is
+        one line of it and the status page is full of the subject. And a
+        half-typed word reaches the content legs as nothing at all: BM25 has no
+        prefix matching here, so "doss" matches zero rows and the search
+        silently degrades to dense-only, which is what let the status page win.
+        """
+        terms = self._terms(parsed)
+        if not terms:
+            return ranked
+        prefixes = tuple(f.strip("/") + "/" for f in parsed.folders)
+        rank = {r["path"]: r["rank"] for r in ranked}
+        named: list[tuple[int, int, float, dict]] = []
+        for path, (own, folders) in tokens.items():
+            if not allowed(path) or (prefixes and not path.startswith(prefixes)):
+                continue
+            score = name_match(terms, own, folders)
+            if score:
+                row = {"path": path, "heading": "", "rank": rank.get(path, len(tokens))}
+                named.append((-score, row["rank"], -files.get(path, 0.0), row))
+        if not named:
+            return ranked
+        named.sort(key=lambda x: x[:3])
+        head = [row for *_, row in named]
+        seen = {r["path"] for r in head}
+        return head + [r for r in ranked if r["path"] not in seen]
+
+    def _by_date(
+        self, parsed: Parsed, ranked: list[dict], files: dict[str, float], tokens: dict, allowed
+    ) -> list[dict]:
         """Order a recency phrase: the newest document OF THAT KIND, not the newest good match.
 
         Match strength cannot pick the pool. Inside one client's folder every
@@ -237,12 +331,7 @@ class Launcher:
         sits in, so the pool is the files whose path carries a topic word, and
         date orders within it. With no such file, the few best matches by date.
         """
-        scope = set(parsed.scope_words)
-        terms = [
-            t[:-1] if t.endswith("s") and len(t) > 3 else t
-            for t in (w.lower().strip(",.;:") for w in parsed.topic.split())
-            if t not in scope and len(t) > 2
-        ]
+        terms = [t for t in self._terms(parsed) if len(t) > 2]
         prefixes = tuple(f.strip("/") + "/" for f in parsed.folders)
         rank = {r["path"]: r for r in ranked}
         in_scope = [p for p in files if allowed(p) and (not prefixes or p.startswith(prefixes))]
@@ -253,10 +342,14 @@ class Launcher:
             base = rank.get(path, {"path": path, "heading": "", "rank": len(files)})
             return {**base, "date": doc_date(path, files[path]), "matched": matched}
 
-        pool = [row(p, n) for p in in_scope if (n := sum(t in p.lower() for t in terms))] if terms else []
+        pool = [row(p, n) for p in in_scope if (n := name_score(terms, *tokens[p]))] if terms else []
         if not pool:
             pool = [row(r["path"], 0) for r in ranked[:RECENCY_FALLBACK]] if terms else [row(p, 0) for p in in_scope]
-        pool.sort(key=lambda r: (-r["matched"], -r["date"].toordinal(), r["rank"]))
+        # Date first, and only then how strongly the name matched. "Last" is a
+        # question about time: among the files these words fit, the newest is
+        # the answer, even when an older one wears the word in its title. A
+        # 2026-04 file called "Acme Meeting Notes" is not the last meeting.
+        pool.sort(key=lambda r: (-r["date"].toordinal(), -r["matched"], r["rank"]))
         # A short pool is padded with the plain topic order, so a file the
         # name test missed is still on the list rather than absent.
         named = {r["path"] for r in pool}

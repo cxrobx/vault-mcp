@@ -326,6 +326,38 @@ def chunk_html(raw: str) -> list[tuple[str, str]]:
     return _pieces(sections)
 
 
+def file_title(rel_path: str, text: str) -> str:
+    """What the document calls itself: an HTML page's <title>, else its filename."""
+    if Path(rel_path).suffix.lower() in HTML_SUFFIXES:
+        return html_title(text) or _page_name(rel_path)
+    return Path(rel_path).stem
+
+
+def backfill_titles(store: Store, files: dict[str, Path] | None = None) -> int:
+    """Fill in titles for rows indexed before titles were stored.
+
+    Reads each file's head — no embedding, so it costs about a second for a
+    whole vault and runs once. Only rows with an empty title are touched, so a
+    note genuinely titled "" would be re-read each time and nothing else would.
+    """
+    current = walk_vault() if files is None else files
+    missing = {p for p, (_, title) in store.file_index().items() if not title}
+    titles: dict[str, str] = {}
+    for rel_path in missing:
+        abs_path = current.get(rel_path)
+        if abs_path is None:
+            continue
+        try:
+            with open(abs_path, encoding="utf-8", errors="replace") as fh:
+                head = fh.read(16_384)
+        except OSError:
+            continue
+        titles[rel_path] = file_title(rel_path, head)
+    if titles:
+        store.set_titles(titles)
+    return len(titles)
+
+
 def reindex(
     store: Store,
     embedder: OllamaEmbedder,
@@ -371,14 +403,13 @@ def reindex(
                 unchanged += 1
                 continue
 
+            title = file_title(rel_path, text)
             if is_html:
                 tags = ""
-                title = html_title(text) or _page_name(rel_path)
                 raw_chunks = chunk_html(text)
             else:
                 frontmatter, body = split_frontmatter(text)
                 tags = extract_tags(frontmatter)
-                title = Path(rel_path).stem
                 raw_chunks = chunk_note(body)
             embed_texts = [
                 f"{title} > {hp}\n{txt}" if hp else f"{title}\n{txt}"
@@ -398,12 +429,14 @@ def reindex(
                     {"heading_path": hp, "text": txt, "tags": tags, "embedding": vectors[i]}
                     for i, (hp, txt) in enumerate(raw_chunks)
                 ],
+                title=title,
             )
             changed += 1
             chunks_embedded += len(raw_chunks)
             if progress:
                 progress(changed, rel_path, len(raw_chunks))
 
+        backfilled = backfill_titles(store, current)
         removed = sorted(set(known) - set(current))
         if removed:
             store.delete_files(removed)
@@ -418,5 +451,6 @@ def reindex(
             "files_unchanged": unchanged,
             "files_removed": len(removed),
             "chunks_embedded": chunks_embedded,
+            "titles_backfilled": backfilled,
             "duration_s": round(time.monotonic() - t0, 2),
         }

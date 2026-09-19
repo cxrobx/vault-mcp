@@ -56,9 +56,13 @@ def _format_hits(hits: list[dict]) -> list[dict]:
 def search_vault(query: str, k: int = 8, folder: str | None = None) -> dict:
     """Hybrid search over the configured vault.
 
-    Covers the vault's markdown and HTML notes, plus the HTML pages of any
-    mounted folder, whose paths start with the mount's name (e.g.
-    "Artifacts/Learnings/…"; vault_stats lists the mounts and where they live).
+    Covers the vault's markdown and HTML notes, plus any mounted folder, whose
+    paths start with the mount's name rather than a vault folder's (e.g.
+    "Artifacts/Learnings/…"). A "pages" mount gives HTML pages; a "notes" mount
+    is a folder of documents outside the vault — a repo's docs, a client
+    folder — indexed the way the vault is. vault_stats lists the mounts, their
+    kind and where they live; pass a mount's name as `folder` to search only
+    it, or a vault folder to keep mounted documents out of the results.
 
     Runs two retrieval legs and fuses them, so it handles both ends of the
     query spectrum: natural-language questions ("pricing strategy for service

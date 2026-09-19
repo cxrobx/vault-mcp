@@ -21,7 +21,7 @@ from pathlib import Path
 import numpy as np
 import yaml
 
-from . import MOUNTS_SPEC, VAULT_PATH
+from . import MOUNTS_SPEC, NOTE_MOUNTS_SPEC, TEXT_SUFFIXES, VAULT_PATH
 from .embeddings import EMBED_DIM, OllamaEmbedder
 from .store import Store
 
@@ -54,27 +54,47 @@ def parse_mounts(spec: str) -> list[tuple[str, Path]]:
 
 
 MOUNTS = parse_mounts(MOUNTS_SPEC)
+NOTE_MOUNTS = parse_mounts(NOTE_MOUNTS_SPEC)
 
 
-def mount_status(vault: Path = VAULT_PATH, mounts: list[tuple[str, Path]] | None = None) -> list[dict]:
-    """Each mount and whether it is indexed: "ok", "missing", or "shadowed".
+def mount_status(
+    vault: Path = VAULT_PATH,
+    mounts: list[tuple[str, Path]] | None = None,
+    note_mounts: list[tuple[str, Path]] | None = None,
+) -> list[dict]:
+    """Each mount, its kind, and whether it is indexed: "ok", "missing", or "shadowed".
 
-    A mount is shadowed when the vault has a top-level entry of the same name:
-    its paths would be indistinguishable from the vault's own, so it stays out.
+    Kind "pages" is an Onyx-style mount (HTML pages only); kind "notes" is
+    walked the way the vault is. A mount is shadowed when the vault has a
+    top-level entry of the same name, or an earlier mount took the name: its
+    paths would be indistinguishable from theirs, so it stays out.
     """
     out = []
-    for name, path in MOUNTS if mounts is None else mounts:
-        if os.path.lexists(vault / name):
-            status = "shadowed"
-        elif not path.is_dir():
-            status = "missing"
-        else:
-            status = "ok"
-        out.append({"name": name, "path": str(path), "status": status})
+    taken: set[str] = set()
+    # The configured mounts apply only when the caller names none at all. A
+    # caller that passes either list has described its whole world, and must
+    # not also inherit whatever this machine's config file mounts.
+    if mounts is None and note_mounts is None:
+        mounts, note_mounts = MOUNTS, NOTE_MOUNTS
+    kinds = (("pages", mounts or []), ("notes", note_mounts or []))
+    for kind, group in kinds:
+        for name, path in group:
+            if os.path.lexists(vault / name) or name in taken:
+                status = "shadowed"
+            elif not path.is_dir():
+                status = "missing"
+            else:
+                status = "ok"
+                taken.add(name)
+            out.append({"name": name, "path": str(path), "kind": kind, "status": status})
     return out
 
 
-def walk_vault(vault: Path = VAULT_PATH, mounts: list[tuple[str, Path]] | None = None) -> dict[str, Path]:
+def walk_vault(
+    vault: Path = VAULT_PATH,
+    mounts: list[tuple[str, Path]] | None = None,
+    note_mounts: list[tuple[str, Path]] | None = None,
+) -> dict[str, Path]:
     """Map index path -> absolute path for every in-scope file.
 
     The vault gives its markdown notes and its HTML notes — except an .html
@@ -82,7 +102,9 @@ def walk_vault(vault: Path = VAULT_PATH, mounts: list[tuple[str, Path]] | None =
     for both. Each mount then gives its HTML pages under "<name>/", listed the
     way Onyx's Artifacts sidebar lists them: below the project level, a folder
     holding index.html is one page, and the rest of that folder (assets,
-    inlined copies) stays out.
+    inlined copies) stays out. A note mount is walked the way the vault is —
+    markdown and HTML notes at any depth — and also gives its TEXT_SUFFIXES
+    files, indexed as plain notes.
 
     Mounts never repeat what an earlier root already gave: a folder or file
     reachable from the vault is skipped when a mount reaches it again, which
@@ -104,7 +126,7 @@ def walk_vault(vault: Path = VAULT_PATH, mounts: list[tuple[str, Path]] | None =
         seen.add(real)
         files[rel] = entry
 
-    def _walk(dirpath: Path, rel: str, depth: int, mounted: bool) -> None:
+    def _walk(dirpath: Path, rel: str, depth: int, mounted: bool, pages: bool) -> None:
         try:
             real = dirpath.resolve()
         except OSError:
@@ -116,21 +138,23 @@ def walk_vault(vault: Path = VAULT_PATH, mounts: list[tuple[str, Path]] | None =
             entries = sorted(dirpath.iterdir(), key=lambda p: p.name)
         except OSError:
             return
-        if mounted and depth >= 2:
+        if pages and depth >= 2:
             index = next((e for e in entries if e.name.lower() in INDEX_NAMES and e.is_file()), None)
             if index is not None:
                 _add(f"{rel}/{index.name}", index, mounted)
                 return
-        md_stems = set() if mounted else {e.stem for e in entries if e.name.endswith(".md")}
+        md_stems = set() if pages else {e.stem for e in entries if e.name.endswith(".md")}
         for entry in entries:
             rel_child = f"{rel}/{entry.name}" if rel else entry.name
             if entry.is_dir():
                 if entry.name.startswith(".") or entry.name in EXCLUDE_DIR_NAMES or rel_child in EXCLUDE_REL_PATHS:
                     continue
-                _walk(entry, rel_child, depth + 1, mounted)
+                _walk(entry, rel_child, depth + 1, mounted, pages)
             elif not entry.is_file():
                 continue
-            elif not mounted and entry.name.endswith(".md"):
+            elif not pages and entry.name.endswith(".md"):
+                _add(rel_child, entry, mounted)
+            elif mounted and not pages and entry.suffix.lower() in TEXT_SUFFIXES and not entry.name.startswith("."):
                 _add(rel_child, entry, mounted)
             elif (
                 entry.suffix.lower() in HTML_SUFFIXES
@@ -139,10 +163,10 @@ def walk_vault(vault: Path = VAULT_PATH, mounts: list[tuple[str, Path]] | None =
             ):
                 _add(rel_child, entry, mounted)
 
-    _walk(vault, "", 0, False)
-    for mount in mount_status(vault, mounts):
+    _walk(vault, "", 0, False, False)
+    for mount in mount_status(vault, mounts, note_mounts):
         if mount["status"] == "ok":
-            _walk(Path(mount["path"]), mount["name"], 0, True)
+            _walk(Path(mount["path"]), mount["name"], 0, True, mount["kind"] == "pages")
     return files
 
 

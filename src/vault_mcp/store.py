@@ -295,7 +295,16 @@ class Store:
     def _folder_prefix(folder: str) -> str:
         return folder.strip("/") + "/"
 
-    def _dense_leg(self, qvec: np.ndarray, k: int, folder: str | None) -> tuple[list[int], dict[int, float]]:
+    @classmethod
+    def _prefixes(cls, folder: str | None, folders: list[str] | None) -> list[str]:
+        """The path prefixes a search is restricted to; [] means unrestricted.
+
+        `folder` is the single-folder form the MCP tool takes; `folders` is a
+        union of several, for a caller whose scope is not one subtree.
+        """
+        return [cls._folder_prefix(f) for f in ([folder] if folder else []) + list(folders or []) if f.strip("/")]
+
+    def _dense_leg(self, qvec: np.ndarray, k: int, prefixes: list[str]) -> tuple[list[int], dict[int, float]]:
         """Top-k matrix positions by cosine, folder applied BEFORE ranking.
 
         The candidate set is restricted first and only those rows are scored,
@@ -308,10 +317,10 @@ class Store:
         n = cache["matrix"].shape[0]
         if n == 0:
             return [], {}
-        if folder:
-            prefix = self._folder_prefix(folder)
+        if prefixes:
+            scope = tuple(prefixes)
             cand = np.fromiter(
-                (i for i, p in enumerate(cache["paths"]) if p.startswith(prefix)), dtype=np.int64
+                (i for i, p in enumerate(cache["paths"]) if p.startswith(scope)), dtype=np.int64
             )
             if cand.size == 0:
                 return [], {}
@@ -325,7 +334,7 @@ class Store:
         positions = [int(cand[i]) if cand is not None else int(i) for i in top]
         return positions, {p: float(scores[i]) for p, i in zip(positions, top)}
 
-    def _lexical_leg(self, query_text: str, k: int, folder: str | None) -> list[int]:
+    def _lexical_leg(self, query_text: str, k: int, prefixes: list[str]) -> list[int]:
         """Top-k matrix positions by BM25 over chunk text + tags.
 
         The folder constraint is part of the candidate query, not a post-filter,
@@ -346,13 +355,13 @@ class Store:
             "WHERE chunks_fts MATCH ?"
         )
         params: list = [match]
-        if folder:
-            prefix = self._folder_prefix(folder)
+        if prefixes:
             # substr(...) = ?, not LIKE: LIKE is ASCII-case-insensitive and
             # would silently diverge from the dense leg's str.startswith, and
             # it would also need % and _ escaped out of the user's folder.
-            sql += " AND substr(chunks.file_path, 1, ?) = ?"
-            params += [len(prefix), prefix]
+            sql += " AND (" + " OR ".join("substr(chunks.file_path, 1, ?) = ?" for _ in prefixes) + ")"
+            for prefix in prefixes:
+                params += [len(prefix), prefix]
         sql += " ORDER BY bm25(chunks_fts, 1.0, 0.5) LIMIT ?"
         params.append(k)
         try:
@@ -377,8 +386,15 @@ class Store:
         k: int = 8,
         folder: str | None = None,
         query_text: str | None = None,
+        folders: list[str] | None = None,
+        candidates: int = CANDIDATE_K,
     ) -> list[dict]:
         """Hybrid search: dense + BM25 candidates fused by RRF.
+
+        `folders` restricts to a union of subtrees (added to `folder`).
+        `candidates` is how many chunks each leg contributes before fusion;
+        raise it with `k` when the caller wants many files rather than the best
+        few chunks.
 
         Falls back to pure dense when `query_text` is omitted or contains no
         indexable token, so the dense-only contract still holds for callers
@@ -388,8 +404,9 @@ class Store:
         if cache["matrix"].shape[0] == 0:
             return []
 
-        dense_pos, cosine = self._dense_leg(qvec, CANDIDATE_K, folder)
-        lex_pos = self._lexical_leg(query_text, CANDIDATE_K, folder) if query_text else []
+        prefixes = self._prefixes(folder, folders)
+        dense_pos, cosine = self._dense_leg(qvec, candidates, prefixes)
+        lex_pos = self._lexical_leg(query_text, candidates, prefixes) if query_text else []
 
         if not lex_pos:
             ranked = dense_pos[:k]

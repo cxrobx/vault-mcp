@@ -165,9 +165,59 @@ meaning.
 |-----|---------|-------|
 | `VAULT_MCP_VAULT` | `~/Documents/CX` | Path to your vault — set this. |
 | `VAULT_MCP_MOUNTS` | `Artifacts=~/Documents/Artifacts` | Extra folders indexed beside the vault: `Name=/path` pairs joined by `:`. Their HTML pages appear under `Name/…` (so `folder="Name"` searches just them). A missing folder is skipped; `""` turns mounts off. |
+| `VAULT_MCP_NOTE_MOUNTS` | *(none)* | Same `Name=/path` shape, but walked the way the vault is: markdown **and** HTML at any depth. For documents that live outside the vault — a client folder, or the folder of repo docs that `scripts/link-repo-docs.sh` builds. |
+| `VAULT_MCP_TEXT_SUFFIXES` | *(none)* | Extra plain-text suffixes a note mount indexes beside `.md`, e.g. `.typ`. |
 | `VAULT_MCP_DB` | `<repo>/data/index.db` | One DB per instance; don't share it between two servers. |
 | `VAULT_MCP_OLLAMA` | `http://localhost:11434` | |
 | `VAULT_MCP_MODEL` | `nomic-embed-text` | |
+
+### Config file — use it once anything else reads the index
+
+Every setting above can also live in `~/.config/vault-mcp/config.toml`
+(`VAULT_MCP_CONFIG` moves it; an env var still wins):
+
+```toml
+vault = "~/notes"
+mounts = ["Artifacts=~/Documents/Artifacts"]
+note_mounts = ["Clients=~/clients", "Repos=~/.local/share/vault-mcp/repos"]
+text_suffixes = [".typ"]
+```
+
+This is not a convenience. Every entry point writes the same index, and a delta
+reindex **deletes whatever its own walk does not reach**. An MCP server
+registered without the mounts and a CLI run with them would take turns removing
+and re-embedding each other's files. One file they all read cannot disagree
+with itself.
+
+## Launcher (Alfred)
+
+`python -m vault_mcp.launcher query "<phrase>"` turns a typed description into
+a ranked list of files, as Alfred Script Filter JSON. It is **not an MCP tool**:
+an agent passes `folder=` to `search_vault`; the phrase parsing exists for a
+person typing.
+
+| Phrase | Read as |
+|---|---|
+| `acme last meeting` | scope = every folder named `acme` · newest first · topic "acme meeting" |
+| `vault note on relationships` | scope = the vault, no mounts · topic "relationships" |
+| `agent debugging guide in onyx` | scope = the pages mounts · topic "agent debugging guide" |
+| `md on jev usecases` | `.md` files only · topic "jev usecases" |
+
+Routing words are read from the start and end of the phrase only, so "pricing
+for last mile delivery" keeps its "last". A folder name scopes a phrase only if
+some folder of that name holds 8+ files. A recency phrase pools the files whose
+**path** carries a topic word and orders them by date — a date in the filename
+(`2026-09-01`, `09.01.26`), else mtime — because inside one client's folder
+everything embeds alike and match strength cannot tell a proposal from the
+meeting notes about it.
+
+A cold call is ~0.3 s on a 1,100-file index, so there is no daemon. Every run
+and every pick (with its rank) is appended to
+`~/.local/state/vault-mcp/launcher.jsonl` — read that before adding a reranker.
+
+Install the `ff` workflow: `integrations/alfred/install.sh` (copies into
+Alfred's preferences — Alfred does not follow symlinks — and records this
+repo's interpreter; re-run after editing the workflow files).
 
 ## Troubleshooting
 
@@ -187,6 +237,7 @@ src/vault_mcp/
   server.py      # FastMCP("vault"), 4 tools, background startup delta reindex
   indexer.py     # vault walk, chunking, delta logic
   embeddings.py  # Ollama /api/embed client (batched, prefixed, clear errors)
+  launcher.py    # typed-phrase front end for Alfred: scope / recency / kind parsing, pick log
   store.py       # SQLite schema, FTS5 index, dense + BM25 legs, RRF fusion
 scripts/
   setup.sh           # idempotent installer: venv → deps → Ollama check → full index

@@ -7,6 +7,10 @@ beside it. Embeds every note locally with Ollama (`nomic-embed-text`,
 both to Claude Code (or any MCP client). Fully local, zero API cost, no cloud
 calls.
 
+![Claude asks vault-mcp a question and the best note ranks first by meaning, not keywords (illustrative UI, fake notes)](docs/media/vault-mcp-demo.gif)
+
+<sub>Illustrative UI with fake notes.</sub>
+
 Point it at a vault and your agent can `search_vault("how did we decide on
 the deployment setup")` instead of grepping for keywords — and still find
 `PostGIS` or `nas-tunnel` by exact name, which pure embedding search is

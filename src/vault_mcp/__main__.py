@@ -1,5 +1,9 @@
 """Entry points: `python -m vault_mcp` (MCP server over stdio),
-`python -m vault_mcp index [--full]` (CLI indexer)."""
+`python -m vault_mcp index [--full]` (CLI indexer),
+`python -m vault_mcp search "<query>" [--k N] [--folder PREFIX]` (CLI search, JSON out).
+
+The CLI search lets a skill query a second index (VAULT_MCP_CONFIG pointing at
+another config with its own vault + db) without registering another MCP server."""
 
 import sys
 
@@ -22,10 +26,26 @@ def _cli_index(full: bool) -> None:
         print(f"{key}: {value}")
 
 
+def _cli_search(argv: list[str]) -> None:
+    import argparse
+    import json
+
+    from .server import search_vault
+
+    ap = argparse.ArgumentParser(prog="vault_mcp search")
+    ap.add_argument("query")
+    ap.add_argument("--k", type=int, default=8)
+    ap.add_argument("--folder", default=None)
+    a = ap.parse_args(argv)
+    print(json.dumps(search_vault(a.query, k=a.k, folder=a.folder), indent=1, ensure_ascii=False))
+
+
 def main() -> None:
     argv = sys.argv[1:]
     if argv and argv[0] == "index":
         _cli_index(full="--full" in argv[1:])
+    elif argv and argv[0] == "search":
+        _cli_search(argv[1:])
     else:
         from .server import run
 

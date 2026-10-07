@@ -23,6 +23,8 @@
     <string>/Users/christopherrobinson/Library/Logs/vault-embed.log</string>
     <key>EnvironmentVariables</key>
     <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
         <key>PYTHONUNBUFFERED</key>
         <string>1</string>
         <key>HF_HUB_OFFLINE</key>

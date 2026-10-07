@@ -63,3 +63,17 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DB_PATH = Path(_setting("VAULT_MCP_DB", "db", str(REPO_ROOT / "data" / "index.db"))).expanduser()
 OLLAMA_URL = _setting("VAULT_MCP_OLLAMA", "ollama", "http://localhost:11434")
 EMBED_MODEL = _setting("VAULT_MCP_MODEL", "model", "nomic-embed-text")
+# Media kinds to index beside notes: any of "pdf", "image", "video" (TOML list
+# or comma-separated). Off by default — media needs a multimodal model behind
+# `ollama` (embed_server/) and poppler/tesseract/ffmpeg/whisper.cpp on PATH.
+MEDIA_KINDS = frozenset(
+    k.strip().lower()
+    for k in _setting("VAULT_MCP_MEDIA", "media", "").replace(",", os.pathsep).split(os.pathsep)
+    if k.strip()
+)
+# whisper.cpp model for video transcripts. Missing = videos are indexed from
+# frames and sound alone, with no transcript text.
+WHISPER_MODEL = Path(
+    _setting("VAULT_MCP_WHISPER_MODEL", "whisper_model",
+             "~/Library/Application Support/cxnotes/models/ggml-base.en.bin")
+).expanduser()

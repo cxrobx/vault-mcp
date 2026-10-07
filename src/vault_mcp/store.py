@@ -161,6 +161,10 @@ class Store:
             conn.executescript(FTS_SCHEMA)
             if "title" not in {r[1] for r in conn.execute("PRAGMA table_info(files)")}:
                 conn.execute("ALTER TABLE files ADD COLUMN title TEXT NOT NULL DEFAULT ''")
+            # What a chunk was embedded from: "text", or the medium ("pdf",
+            # "image", "video") when pixels/sound went into its vector.
+            if "kind" not in {r[1] for r in conn.execute("PRAGMA table_info(chunks)")}:
+                conn.execute("ALTER TABLE chunks ADD COLUMN kind TEXT NOT NULL DEFAULT 'text'")
         self._migrate_fts()
 
     def _connect(self) -> sqlite3.Connection:
@@ -235,9 +239,9 @@ class Store:
             )
             conn.execute("DELETE FROM chunks WHERE file_path=?", (path,))
             conn.executemany(
-                "INSERT INTO chunks(file_path, heading_path, text, tags, embedding) VALUES(?,?,?,?,?)",
+                "INSERT INTO chunks(file_path, heading_path, text, tags, kind, embedding) VALUES(?,?,?,?,?,?)",
                 [
-                    (path, c["heading_path"], c["text"], c["tags"],
+                    (path, c["heading_path"], c["text"], c["tags"], c.get("kind", "text"),
                      np.asarray(c["embedding"], dtype=np.float32).tobytes())
                     for c in chunks
                 ],
@@ -307,10 +311,10 @@ class Store:
     def _load(self) -> dict:
         with closing(self._connect()) as conn:
             rows = conn.execute(
-                "SELECT id, file_path, heading_path, text, tags, embedding FROM chunks ORDER BY id"
+                "SELECT id, file_path, heading_path, text, tags, embedding, kind FROM chunks ORDER BY id"
             ).fetchall()
         if not rows:
-            return {"ids": [], "pos": {}, "paths": [], "headings": [], "texts": [], "tags": [],
+            return {"ids": [], "pos": {}, "paths": [], "headings": [], "texts": [], "tags": [], "kinds": [],
                     "matrix": np.zeros((0, 1), dtype=np.float32)}
         matrix = np.frombuffer(b"".join(r[5] for r in rows), dtype=np.float32).reshape(len(rows), -1)
         return {
@@ -322,6 +326,7 @@ class Store:
             "headings": [r[2] for r in rows],
             "texts": [r[3] for r in rows],
             "tags": [r[4] for r in rows],
+            "kinds": [r[6] for r in rows],
             "matrix": matrix,
         }
 
@@ -476,6 +481,7 @@ class Store:
                 "heading_path": cache["headings"][p],
                 "text": cache["texts"][p],
                 "tags": cache["tags"][p],
+                "kind": cache["kinds"][p],
                 "score": fused[p],
                 "retrieval": legs[p],
             }

@@ -37,7 +37,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import date, datetime
 from pathlib import Path
 
-from . import DB_PATH, VAULT_PATH
+from . import DB_PATH, VAULT_PATH, media
 from .indexer import HTML_SUFFIXES, INDEX_NAMES, html_title, mount_status
 
 LOG_PATH = Path(os.environ.get("VAULT_MCP_LAUNCHER_LOG", "~/.local/state/vault-mcp/launcher.jsonl")).expanduser()
@@ -401,7 +401,11 @@ def alfred_items(phrase: str, parsed: Parsed, rows: list[dict]) -> dict:
                 "type": "file:skipcheck",
                 "quicklookurl": row["abs"],
                 "text": {"copy": row["abs"]},
-                "variables": {"pick_rank": str(rank), "pick_query": phrase, "pick_shown": json.dumps(shown)},
+                "variables": {
+                    "pick_rank": str(rank), "pick_query": phrase, "pick_shown": json.dumps(shown),
+                    # A video hit opens at the window that matched.
+                    **({"pick_at": str(at)} if (at := media.seconds_at(row["heading"])) is not None else {}),
+                },
             }
         )
     if not items:
@@ -434,10 +438,21 @@ def rendered_twin(path: Path) -> Path | None:
     return pdf if pdf.is_file() else None
 
 
-def open_file(abs_path: str) -> None:
-    """Vault markdown in Obsidian, HTML in Onyx, a built artifact over its source, else the default app."""
+VLC = Path("/Applications/VLC.app/Contents/MacOS/VLC")
+
+
+def open_file(abs_path: str, at: int | None = None) -> None:
+    """Vault markdown in Obsidian, HTML in Onyx, a built artifact over its source, else the default app.
+
+    A video with an offset opens in VLC at that second (QuickTime can't be
+    told where to start from the command line); without VLC it opens at 0.
+    """
     path = rendered_twin(Path(abs_path)) or Path(abs_path)
     suffix = path.suffix.lower()
+    if at is not None and media.kind_of(path) == "video" and VLC.is_file():
+        subprocess.Popen([str(VLC), f"--start-time={at}", str(path)], start_new_session=True,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return
     try:
         in_vault = path.resolve().is_relative_to(VAULT_PATH.resolve())
     except OSError:
@@ -488,7 +503,8 @@ def main(argv: list[str]) -> None:
                 "shown": json.loads(os.environ.get("pick_shown") or "[]"),
             }
         )
-        open_file(path)
+        at = os.environ.get("pick_at")
+        open_file(path, int(at) if at and at.isdigit() else None)
     else:
         print(__doc__)
 

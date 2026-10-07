@@ -41,6 +41,10 @@ def _format_hits(hits: list[dict]) -> list[dict]:
             "score": round(h["score"], 4),
             "tags": h["tags"],
         }
+        # PDF pages, images and video windows embedded from their pixels/sound.
+        # `heading` then says where in the file: "p. 3", "@ 1:30".
+        if h.get("kind", "text") != "text":
+            hit["kind"] = h["kind"]
         # Present only on hybrid search: which leg(s) surfaced the hit, and the
         # cosine behind it. `score` is an RRF score there — a small number on a
         # different scale from cosine, comparable only within one result set.

@@ -24,8 +24,9 @@ from pathlib import Path
 import numpy as np
 import yaml
 
-from . import EXCLUDE_GLOBS, MOUNTS_SPEC, NOTE_MOUNTS_SPEC, TEXT_SUFFIXES, VAULT_PATH
-from .embeddings import EMBED_DIM, OllamaEmbedder
+from . import EXCLUDE_GLOBS, MEDIA_KINDS, MOUNTS_SPEC, NOTE_MOUNTS_SPEC, TEXT_SUFFIXES, VAULT_PATH
+from . import media
+from .embeddings import EMBED_DIM, MediaRejected, OllamaEmbedder
 from .store import Store
 
 EXCLUDE_DIR_NAMES = {
@@ -127,6 +128,7 @@ def walk_vault(
     mounts: list[tuple[str, Path]] | None = None,
     note_mounts: list[tuple[str, Path]] | None = None,
     exclude: tuple[str, ...] | None = None,
+    media_kinds: frozenset[str] | None = None,
 ) -> dict[str, Path]:
     """Map index path -> absolute path for every in-scope file.
 
@@ -146,6 +148,7 @@ def walk_vault(
     note symlinked to another note keeps both addresses, as it always has.
     """
     globs = EXCLUDE_GLOBS if exclude is None else exclude
+    kinds = MEDIA_KINDS if media_kinds is None else media_kinds
     files: dict[str, Path] = {}
     visited: set[Path] = set()
     seen: set[Path] = set()
@@ -180,6 +183,8 @@ def walk_vault(
                 _add(f"{rel}/{index.name}", index, mounted)
                 return
         md_stems = set() if pages else {e.stem for e in entries if e.name.endswith(".md")}
+        # A PDF beside a same-name note is that note's export; the note stands for both.
+        text_stems = md_stems | {e.stem for e in entries if e.suffix.lower() in HTML_SUFFIXES | set(TEXT_SUFFIXES)}
         for entry in entries:
             rel_child = f"{rel}/{entry.name}" if rel else entry.name
             if entry.is_dir():
@@ -201,6 +206,15 @@ def walk_vault(
                 entry.suffix.lower() in HTML_SUFFIXES
                 and not entry.name.startswith(".")
                 and entry.stem not in md_stems
+            ):
+                _add(rel_child, entry, mounted)
+            elif (
+                not pages
+                and kinds
+                and not entry.name.startswith(".")
+                and media.kind_of(entry) in kinds
+                and not (media.kind_of(entry) == "pdf" and entry.stem in text_stems)
+                and media.worth_indexing(entry)
             ):
                 _add(rel_child, entry, mounted)
 
@@ -386,7 +400,7 @@ def backfill_titles(store: Store, files: dict[str, Path] | None = None) -> int:
     titles: dict[str, str] = {}
     for rel_path in missing:
         abs_path = current.get(rel_path)
-        if abs_path is None:
+        if abs_path is None or media.kind_of(abs_path):
             continue
         try:
             with open(abs_path, encoding="utf-8", errors="replace") as fh:
@@ -397,6 +411,52 @@ def backfill_titles(store: Store, files: dict[str, Path] | None = None) -> int:
     if titles:
         store.set_titles(titles)
     return len(titles)
+
+
+def _index_media(store, embedder, rel_path, abs_path, st, kind, db, full) -> int | str | None:
+    """Index one PDF/image/video. Returns chunks embedded, None if unchanged, or an error string.
+
+    A file that can't be read is reported and left out of this run — not
+    stored with zero chunks, which would hide it from every later delta run
+    until it changed. A dead embed server is NOT a per-file error: that
+    raises, and stops the reindex, as it does for notes.
+    """
+    try:
+        content_hash = media.file_hash(abs_path)
+    except OSError as exc:
+        return f"unreadable: {exc}"
+    if db and not full and db[2] == content_hash:
+        store.touch_file(rel_path, st.st_mtime, st.st_size)
+        return None
+    title = Path(rel_path).stem
+    try:
+        chunks = media.chunks_for(abs_path, kind, _split_oversized)
+        texts = [c for c in chunks if not c["media"]]
+        items = [c for c in chunks if c["media"]]
+        vec_text = embedder.embed_documents([embedder.format_document(title, c["heading"], c["text"]) for c in texts])
+        vec_media = (
+            embedder.embed_items([
+                {"text": embedder.format_document(
+                    title, c["heading"], f"{c['text']} {media.placeholders(c['media'])}".strip()),
+                 **c["media"]}
+                for c in items
+            ])
+            if items else np.zeros((0, EMBED_DIM), dtype=np.float32)
+        )
+    except (media.MediaError, MediaRejected) as exc:
+        return str(exc)
+    rows = [
+        {"heading_path": c["heading"], "text": c["text"], "tags": "", "kind": "text", "embedding": vec_text[i]}
+        for i, c in enumerate(texts)
+    ] + [
+        {"heading_path": c["heading"], "text": c["text"], "tags": "", "kind": kind, "embedding": vec_media[i]}
+        for i, c in enumerate(items)
+    ]
+    # Keep reading order (page / timestamp) in the table, whatever the embed order was.
+    order = {id(c): n for n, c in enumerate(chunks)}
+    paired = sorted(zip([order[id(c)] for c in texts + items], rows), key=lambda x: x[0])
+    store.replace_file(rel_path, st.st_mtime, st.st_size, content_hash, [r for _, r in paired], title=title)
+    return len(rows)
 
 
 def reindex(
@@ -424,7 +484,10 @@ def reindex(
             full = True
 
         current = walk_vault()
+        if not embedder.multimodal:
+            current = {p: a for p, a in current.items() if media.kind_of(a) is None}
         known = store.all_file_stats()
+        media_errors: dict[str, str] = {}
         changed = unchanged = 0
         chunks_embedded = 0
 
@@ -436,6 +499,19 @@ def reindex(
             db = known.get(rel_path)
             if db and not full and db[0] == st.st_mtime and db[1] == st.st_size:
                 unchanged += 1
+                continue
+            kind = media.kind_of(abs_path)
+            if kind:
+                result = _index_media(store, embedder, rel_path, abs_path, st, kind, db, full)
+                if result is None:
+                    unchanged += 1
+                elif isinstance(result, str):
+                    media_errors[rel_path] = result
+                else:
+                    changed += 1
+                    chunks_embedded += result
+                    if progress:
+                        progress(changed, rel_path, result)
                 continue
             is_html = abs_path.suffix.lower() in HTML_SUFFIXES
             try:
@@ -497,5 +573,6 @@ def reindex(
             "files_removed": len(removed),
             "chunks_embedded": chunks_embedded,
             "titles_backfilled": backfilled,
+            **({"media_errors": media_errors} if media_errors else {}),
             "duration_s": round(time.monotonic() - t0, 2),
         }

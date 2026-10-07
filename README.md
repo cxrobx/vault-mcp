@@ -123,6 +123,32 @@ pseudo-query from the note's own terms mostly retrieves notes sharing its
 boilerplate (same client, same template, same tag header) rather than its
 meaning.
 
+### Media (PDFs, images, video)
+
+With `media = ["pdf", "image", "video"]` in `config.toml` (and a multimodal
+model, i.e. EmbeddingGemma 2 via `embed_server/`), the vault and note mounts
+also index:
+
+- **PDFs**: per page (`p. 3`). Text pages index as text; a page with under
+  300 characters (a slide, a scan) is embedded from its rendered image too. A
+  PDF beside a same-name note/HTML is that note's export and is skipped.
+- **Images** over 8 KB: the pixels plus `tesseract` OCR text.
+- **Video**: 30 s windows (`@ 1:30`), each embedded from 1 fps frames, the
+  audio, and the whisper.cpp transcript; the transcript is also a plain text
+  chunk, so narration is findable as text. `j` opens a video hit in VLC at
+  that second.
+
+Chunks record what they were embedded from in `chunks.kind`; `search_vault`
+hits carry `kind` when it isn't text. Decoding happens in the embed server,
+which reads only files under the configured roots. Needs poppler, tesseract,
+ffmpeg and whisper-cli on PATH (`brew install poppler tesseract ffmpeg
+whisper-cpp`); `whisper_model` in config picks the transcription model.
+
+**Indexing runs every 15 minutes** (LaunchAgent `com.cx.vault-index`) as well as
+at every MCP server start, under a machine-wide lock: only one indexer runs at
+a time and the others skip. MCP servers notice another process's writes on
+their next search.
+
 ### Storage
 
 - **Embeddings**: `POST /api/embed` on Ollama's API, with the model's own task

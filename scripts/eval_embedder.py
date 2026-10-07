@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 """Embedder bake-off: would a different embedding model find the right note sooner?
 
-Compares the live model (nomic-embed-text, vectors already in the index) with a
-candidate (EmbeddingGemma 2 by default) on known-item search — a query written
+Compares the live model (whatever config.toml names; nomic-embed-text until
+2026-10-06, EmbeddingGemma 2 since) with a candidate (EmbeddingGemma 2 by default) on known-item search — a query written
 for one specific note, scored by where that note lands. Both run through the
 real `Store.search`, hybrid and dense-only, on COPIES of the index; the live
 index is never written.
@@ -42,7 +42,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from vault_mcp import DB_PATH  # noqa: E402
+from vault_mcp import DB_PATH, EMBED_MODEL  # noqa: E402
 from vault_mcp.embeddings import OllamaEmbedder  # noqa: E402
 from vault_mcp.store import Store  # noqa: E402
 
@@ -183,14 +183,15 @@ def summarize(r: list[int]) -> str:
 def cmd_run(args) -> None:
     queries = [json.loads(l) for l in QUERIES.read_text().splitlines() if l.strip()]
     live = Store(DB_PATH)  # read-only use: search never writes
-    nomic = OllamaEmbedder()
+    # The live index, queried the way vault-mcp queries it (model from config).
+    incumbent = OllamaEmbedder()
     model = load_candidate(args.model)
 
     def gemma(dim):
         return lambda q: model.encode(f"task: search result | query: {q}", truncate_dim=dim,
                                       normalize_embeddings=True)
 
-    systems = [("nomic-embed-text (live)", live, nomic.embed_query)]
+    systems = [(f"{EMBED_MODEL} (live)", live, incumbent.embed_query)]
     for dim in args.dims:
         systems.append((f"{args.model.split('/')[-1]} @{dim}", Store(candidate_db(args.model, dim)), gemma(dim)))
 

@@ -1,9 +1,15 @@
-"""Ollama embeddings client.
+"""Embeddings client for Ollama's API (Ollama itself, or embed_server/).
 
-nomic-embed-text is a task-prefixed model: documents must be embedded with
-`search_document: ` and queries with `search_query: ` or retrieval quality
-degrades measurably. Vectors are L2-normalized here so the store can score
-with a plain dot product.
+Both supported models are task-prefixed, each in its own format, and a wrong
+or missing prefix degrades retrieval silently rather than failing. So the
+prefixes live in one table keyed by model name, and the document text is built
+here (`format_document`) rather than by the indexer:
+
+* nomic-embed-text — `search_document: ` / `search_query: `.
+* embeddinggemma-2 — `title: {title} | text: {body}` / `task: search result |
+  query: `, per its model card. Served by embed_server/ (not on Ollama).
+
+Vectors are L2-normalized here so the store can score with a plain dot product.
 """
 
 import httpx
@@ -11,8 +17,11 @@ import numpy as np
 
 from . import EMBED_MODEL, OLLAMA_URL
 
-DOC_PREFIX = "search_document: "
-QUERY_PREFIX = "search_query: "
+# model -> (document template, query prefix). Templates get title/heading/text.
+PROFILES = {
+    "nomic-embed-text": ("search_document: {title}{sep}{heading}\n{text}", "search_query: "),
+    "embeddinggemma-2": ("title: {title}{sep}{heading} | text: {text}", "task: search result | query: "),
+}
 BATCH_SIZE = 32
 EMBED_DIM = 768
 
@@ -33,6 +42,18 @@ class OllamaEmbedder:
         self.model = model
         self._client = httpx.Client(base_url=base_url, timeout=httpx.Timeout(120.0, connect=5.0))
         self._checked = False
+        try:
+            self._doc_template, self._query_prefix = PROFILES[model.split(":")[0]]
+        except KeyError:
+            raise EmbeddingsUnavailable(
+                f"No prompt profile for embedding model '{model}' — add one to PROFILES in embeddings.py."
+            ) from None
+
+    def format_document(self, title: str, heading: str, text: str) -> str:
+        """The exact string a chunk is embedded as, prefix included."""
+        return self._doc_template.format(
+            title=title, sep=" > " if heading else "", heading=heading, text=text
+        )
 
     def check(self) -> None:
         """Verify Ollama is reachable and the model is pulled; raise a clear error if not."""
@@ -41,7 +62,8 @@ class OllamaEmbedder:
             resp.raise_for_status()
         except httpx.HTTPError as exc:
             raise EmbeddingsUnavailable(
-                f"Ollama is not reachable at {self.base_url} — start the Ollama app (or run `ollama serve`)."
+                f"Embedding server not reachable at {self.base_url} — start the Ollama app, or for "
+                f"{self.model} the com.cx.vault-embed LaunchAgent (embed_server/)."
             ) from exc
         names = [m.get("name", "") for m in resp.json().get("models", [])]
         if not any(n == self.model or n.split(":")[0] == self.model for n in names):
@@ -66,12 +88,13 @@ class OllamaEmbedder:
         return _normalize(np.asarray(vecs, dtype=np.float32))
 
     def embed_documents(self, texts: list[str]) -> np.ndarray:
+        """Embed texts already built by format_document()."""
         if not self._checked:
             self.check()
         if not texts:
             return np.zeros((0, EMBED_DIM), dtype=np.float32)
         batches = [
-            self._embed([DOC_PREFIX + t for t in texts[i : i + BATCH_SIZE]])
+            self._embed(texts[i : i + BATCH_SIZE])
             for i in range(0, len(texts), BATCH_SIZE)
         ]
         return np.vstack(batches)
@@ -79,4 +102,4 @@ class OllamaEmbedder:
     def embed_query(self, text: str) -> np.ndarray:
         if not self._checked:
             self.check()
-        return self._embed([QUERY_PREFIX + text])[0]
+        return self._embed([self._query_prefix + text])[0]

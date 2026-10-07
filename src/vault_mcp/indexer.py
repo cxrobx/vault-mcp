@@ -4,7 +4,7 @@ Walks the vault following symlinks (symlinked folders index like real ones)
 with a realpath cycle guard, then each mounted folder (VAULT_MCP_MOUNTS) under
 its own name. Markdown chunks split on H1–H3 headings outside code fences;
 HTML pages split on <h1>–<h3> over the text a reader sees. Each chunk is
-embedded as "{title} > {heading path}\\n{body}". Delta reindex: mtime+size
+embedded via OllamaEmbedder.format_document (title, heading path, body). Delta reindex: mtime+size
 stat sweep, content-hash confirm, per-file transaction — a crash never leaves
 a file half-indexed.
 """
@@ -426,10 +426,7 @@ def reindex(
                 frontmatter, body = split_frontmatter(text)
                 tags = extract_tags(frontmatter)
                 raw_chunks = chunk_note(body)
-            embed_texts = [
-                f"{title} > {hp}\n{txt}" if hp else f"{title}\n{txt}"
-                for hp, txt in raw_chunks
-            ]
+            embed_texts = [embedder.format_document(title, hp, txt) for hp, txt in raw_chunks]
             vectors = (
                 embedder.embed_documents(embed_texts)
                 if embed_texts

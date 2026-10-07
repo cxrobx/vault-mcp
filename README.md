@@ -125,9 +125,13 @@ meaning.
 
 ### Storage
 
-- **Embeddings**: Ollama `POST /api/embed` with nomic task prefixes
-  (`search_document: ` at index time, `search_query: ` at query time — the
-  prefixes matter for retrieval quality).
+- **Embeddings**: `POST /api/embed` on Ollama's API, with the model's own task
+  prefixes from `PROFILES` in `embeddings.py` (the prefixes matter for
+  retrieval quality). Since 2026-10-06 the model is **EmbeddingGemma 2**, served
+  by `embed_server/` (LaunchAgent `com.cx.vault-embed`, `127.0.0.1:11436`)
+  because Ollama doesn't carry it; on known-item search it took top-1 from
+  32% to 56% over nomic-embed-text (`scripts/eval_embedder.py`). Going back to
+  nomic is `model`/`ollama` in `config.toml` plus a reindex.
 - **Store**: plain SQLite (`data/index.db`, gitignored) with float32 BLOB
   embeddings, L2-normalized at write. The dense leg is a numpy dot product over
   the whole chunk matrix — at ~8k chunks that's ~24 MB and <20 ms, no vector

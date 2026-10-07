@@ -284,10 +284,24 @@ class Store:
 
     # ---- reads (search) -------------------------------------------------
 
+    def _signature(self) -> tuple:
+        """Cheap fingerprint of the chunk table, to spot another process's writes.
+
+        Every MCP server caches the matrix, and the indexer is often a
+        different process (another session, the scheduled LaunchAgent), whose
+        writes `invalidate()` never hears about. chunks.id is AUTOINCREMENT, so
+        any replace bumps max(id) and any delete drops count(*): together they
+        change on every write, at the cost of one indexed query per search.
+        """
+        with closing(self._connect()) as conn:
+            return conn.execute("SELECT max(id), count(*) FROM chunks").fetchone()
+
     def _get_cache(self) -> dict:
+        sig = self._signature()
         with self._lock:
-            if self._cache is None:
+            if self._cache is None or self._cache.get("sig") != sig:
                 self._cache = self._load()
+                self._cache["sig"] = sig
             return self._cache
 
     def _load(self) -> dict:

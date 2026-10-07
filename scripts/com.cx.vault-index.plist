@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Delta reindex every 15 minutes, so new notes and media are searchable
+     without a Claude session having to start. Skips itself when another
+     indexer holds the lock (see indexer._index_flock). -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.cx.vault-index</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/christopherrobinson/Projects/vault-mcp/.venv/bin/python</string>
+        <string>-m</string>
+        <string>vault_mcp</string>
+        <string>index</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/christopherrobinson/Projects/vault-mcp</string>
+    <key>StartInterval</key>
+    <integer>900</integer>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>LowPriorityIO</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/Users/christopherrobinson/Library/Logs/vault-index.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/christopherrobinson/Library/Logs/vault-index.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>PYTHONUNBUFFERED</key>
+        <string>1</string>
+    </dict>
+</dict>
+</plist>

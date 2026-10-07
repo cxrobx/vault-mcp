@@ -9,6 +9,8 @@ stat sweep, content-hash confirm, per-file transaction — a crash never leaves
 a file half-indexed.
 """
 
+import contextlib
+import fcntl
 import fnmatch
 import hashlib
 import html
@@ -41,6 +43,30 @@ INDEX_NAMES = {"index.html", "index.htm"}
 MAX_HTML_BYTES = 4_000_000
 
 _reindex_lock = threading.Lock()
+
+
+@contextlib.contextmanager
+def _index_flock(db_path: Path):
+    """Machine-wide indexer lock; yields False when another process holds it.
+
+    `_reindex_lock` only serializes threads in one process, and every Claude
+    session runs its own MCP server, plus the com.cx.vault-index LaunchAgent.
+    With text that overlap was harmless; with media (a 20-minute video is ~30
+    multimodal embeds) it would multiply the work and tie up the embed server.
+    flock is released by the kernel when the holder dies, so a crash can't
+    leave a stale lock.
+    """
+    lock_path = Path(db_path).with_suffix(".lock")
+    with open(lock_path, "w") as fh:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
 
 
 def parse_mounts(spec: str) -> list[tuple[str, Path]]:
@@ -379,8 +405,15 @@ def reindex(
     full: bool = False,
     progress=None,
 ) -> dict:
-    """Delta (or full) reindex of the vault. Serialized by a module lock."""
-    with _reindex_lock:
+    """Delta (or full) reindex of the vault.
+
+    One indexer at a time, machine-wide: a call that finds another running
+    returns {"mode": "skipped"} instead of queueing behind it — the one
+    already running will pick up whatever this call would have.
+    """
+    with _reindex_lock, _index_flock(store.db_path) as acquired:
+        if not acquired:
+            return {"mode": "skipped", "reason": "another indexer is running"}
         t0 = time.monotonic()
         if not VAULT_PATH.is_dir():
             raise RuntimeError(f"Vault not found at {VAULT_PATH}")

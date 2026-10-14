@@ -6,7 +6,12 @@ same two endpoints, so the client only changes its URL and model name.
 
 It exists as a daemon, not an in-process import, because the launcher (`j`)
 starts cold on every keystroke-search: loading torch and the model there would
-add seconds to a ~130 ms call. Here the model loads once and stays warm.
+add seconds to a ~130 ms call. Here the model loads on the first request and
+stays warm while it's in use; after VAULT_EMBED_IDLE_S (default 600 s) without a
+request the process exits and launchd starts a fresh, empty one. Held warm, float32 plus the MPS allocator's cache
+sat at ~9.6 GB around the clock (measured 2026-10-14) for a search used a few
+times a week; dropped, the process is a few hundred MB, and the first search
+after a quiet spell pays a reload of a few seconds.
 
 Text input arrives already prefixed — task prefixes are the client's job
 (vault_mcp.embeddings), so this never applies a prompt of its own. Vectors are
@@ -40,6 +45,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 import tomllib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -61,6 +67,7 @@ CONFIGS = [Path(p).expanduser() for p in os.environ.get(
 FRAME_W, FRAME_H = 448, 252
 PDF_DPI = 110
 MAX_MEDIA_SECONDS = 60  # one window; the client segments longer media
+IDLE_S = float(os.environ.get("VAULT_EMBED_IDLE_S", "600"))
 
 
 def _roots() -> list[Path]:
@@ -79,21 +86,49 @@ def _roots() -> list[Path]:
 
 ROOTS = _roots()
 
-model = SentenceTransformer(
-    MODEL_ID,
-    device="mps" if torch.backends.mps.is_available() else "cpu",
-    # float32, not float16: the model card warns fp16 overflows to NaN.
-    model_kwargs={"torch_dtype": torch.float32},
-)
+_model: SentenceTransformer | None = None
+_last_used = 0.0
+
+
+def _get_model() -> SentenceTransformer:
+    """The model, loaded on first use. Only called inside the GPU gate."""
+    global _model
+    if _model is None:
+        t = time.monotonic()
+        _model = SentenceTransformer(
+            MODEL_ID,
+            device="mps" if torch.backends.mps.is_available() else "cpu",
+            # float32, not float16: the model card warns fp16 overflows to NaN.
+            model_kwargs={"torch_dtype": torch.float32},
+        )
+        print(f"vault-embed: model loaded in {time.monotonic() - t:.1f}s", file=sys.stderr, flush=True)
+    return _model
+
 
 _gate = threading.Condition()
 _busy = False
 _queries_waiting = 0
 
 
+def _exit_when_idle() -> None:
+    """After IDLE_S without a request, exit; launchd (KeepAlive) starts a fresh one.
+
+    Exiting rather than dropping the model in place: freeing it and emptying the
+    MPS cache still left the process at ~1.1 GB, against ~330 MB for a fresh
+    start with nothing loaded (measured 2026-10-14).
+    """
+    while True:
+        time.sleep(min(60.0, IDLE_S / 4))
+        with _gate:
+            if _model is None or _busy or _queries_waiting or time.monotonic() - _last_used < IDLE_S:
+                continue
+            print("vault-embed: idle, exiting to free the model", file=sys.stderr, flush=True)
+            os._exit(0)
+
+
 def _run(fn, is_query: bool):
     """Serialize GPU work; waiting queries go before waiting media."""
-    global _busy, _queries_waiting
+    global _busy, _queries_waiting, _last_used
     with _gate:
         if is_query:
             _queries_waiting += 1
@@ -104,9 +139,10 @@ def _run(fn, is_query: bool):
                 _queries_waiting -= 1
         _busy = True
     try:
-        return fn()
+        return fn(_get_model())
     finally:
         with _gate:
+            _last_used = time.monotonic()
             _busy = False
             _gate.notify_all()
 
@@ -202,7 +238,7 @@ class Handler(BaseHTTPRequestHandler):
             if isinstance(inputs, str):
                 inputs = [inputs]
             if all(isinstance(x, str) for x in inputs):
-                vecs = _run(lambda: model.encode(inputs, batch_size=16, normalize_embeddings=True),
+                vecs = _run(lambda m: m.encode(inputs, batch_size=16, normalize_embeddings=True),
                             is_query=len(inputs) == 1)
             else:
                 # Media is decoded outside the GPU gate (ffmpeg/pdftoppm are CPU),
@@ -210,7 +246,7 @@ class Handler(BaseHTTPRequestHandler):
                 rows = []
                 for x in inputs:
                     item = x if isinstance(x, str) else _decode(x)
-                    rows.append(_run(lambda: model.encode(item, normalize_embeddings=True), is_query=False))
+                    rows.append(_run(lambda m: m.encode(item, normalize_embeddings=True), is_query=False))
                 vecs = np.vstack(rows)
             self._send(200, {"model": MODEL_NAME, "embeddings": np.asarray(vecs).tolist()})
         except (PermissionError, FileNotFoundError, ValueError, KeyError) as exc:
@@ -227,4 +263,5 @@ class Handler(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     print(f"vault-embed: {MODEL_ID} as '{MODEL_NAME}' on {HOST}:{PORT}; media roots {[str(r) for r in ROOTS]}",
           file=sys.stderr, flush=True)
+    threading.Thread(target=_exit_when_idle, daemon=True).start()
     ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()

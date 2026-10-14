@@ -157,7 +157,12 @@ their next search.
   by `embed_server/` (LaunchAgent `com.cx.vault-embed`, `127.0.0.1:11436`)
   because Ollama doesn't carry it; on known-item search it took top-1 from
   32% to 56% over nomic-embed-text (`scripts/eval_embedder.py`). Going back to
-  nomic is `model`/`ollama` in `config.toml` plus a reindex.
+  nomic is `model`/`ollama` in `config.toml` plus a reindex. The server loads
+  the model on its first request and exits after 10 idle minutes
+  (`VAULT_EMBED_IDLE_S`), and launchd starts a fresh, empty one: ~330 MB idle
+  instead of ~9.6 GB held warm, for a ~3 s first search after a quiet spell.
+  `ProcessType` is `Standard`, not `Background`: macOS throttled a Background
+  agent's model load to 8.3 s.
 - **Store**: plain SQLite (`data/index.db`, gitignored) with float32 BLOB
   embeddings, L2-normalized at write. The dense leg is a numpy dot product over
   the whole chunk matrix — at ~8k chunks that's ~24 MB and <20 ms, no vector

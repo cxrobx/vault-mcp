@@ -16,7 +16,7 @@
     <key>ThrottleInterval</key>
     <integer>10</integer>
     <key>ProcessType</key>
-    <string>Background</string>
+    <string>Standard</string>
     <key>StandardOutPath</key>
     <string>/Users/christopherrobinson/Library/Logs/vault-embed.log</string>
     <key>StandardErrorPath</key>

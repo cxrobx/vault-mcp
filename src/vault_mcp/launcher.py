@@ -371,10 +371,11 @@ class Launcher:
 def display_title(abs_path: Path, rel_path: str) -> str:
     path = Path(rel_path)
     title = ""
-    if path.suffix.lower() in HTML_SUFFIXES:
+    if path.suffix.lower() in HTML_SUFFIXES or indexer.UNTITLED_NAME.match(path.stem):
+        # An HTML page's <title>; an Untitled-<UUID> note's own title or first line.
         try:
             with open(abs_path, encoding="utf-8", errors="replace") as fh:
-                title = html_title(fh.read(16_384))
+                title = indexer.file_title(rel_path, fh.read(16_384))
         except OSError:
             title = ""
     if not title:

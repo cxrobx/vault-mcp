@@ -257,10 +257,20 @@ class UntitledTitleTests(unittest.TestCase):
         self.assertEqual(indexer.file_title(f"Scratchpad/{uid}.md", "---\nid: x\ntitle: Q4 plan\n---\n# Body"), "Q4 plan")
         self.assertEqual(indexer.file_title(f"Scratchpad/{uid}.md", "---\nid: x\n---\n## - [ ] Ship it"), "Ship it")
         self.assertEqual(indexer.file_title(f"Scratchpad/{uid}.txt", ""), uid)
+        self.assertEqual(indexer.file_title(f"Scratchpad/{uid}.txt", "<!DOCTYPE html><html>\n[\n  {\n\"id\": 1\nInvoice export from Wave"), "Invoice export from Wave")
 
     def test_named_files_keep_their_filename(self):
         self.assertEqual(indexer.file_title("Areas/Untitled ideas.md", "---\ntitle: Other\n---\nx"), "Untitled ideas")
         self.assertEqual(indexer.file_title("Scratchpad/groceries.txt", "Grocery run"), "groceries")
+
+
+class UntitledDisplayTests(unittest.TestCase):
+    def test_launcher_shows_an_untitled_note_by_its_first_line(self):
+        from vault_mcp.launcher import display_title
+        with tempfile.TemporaryDirectory() as d:
+            note = Path(d) / "Untitled-01C8BB7D-6901-474B-9FC6-DE05756B13AE.txt"
+            note.write_text("Victor has created his own avatar\nmore")
+            self.assertEqual(display_title(note, f"Scratchpad/{note.name}"), "Victor has created his own avatar")
 
 
 class OpenWithTests(unittest.TestCase):

@@ -401,7 +401,8 @@ def file_title(rel_path: str, text: str) -> str:
             return title.strip()
         for line in body.splitlines():
             line = re.sub(r"^[#>*\-\s]+|\[[ xX]\]\s*", "", line).strip()
-            if line:
+            # The first line that reads as words: not pasted markup or JSON.
+            if line and line[0] not in "<{[" and len(re.findall(r"[^\W\d_]", line)) >= 3:
                 return line[:80]
     return stem
 

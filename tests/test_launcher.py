@@ -3,6 +3,7 @@
 Run: .venv/bin/python -m unittest discover -s tests
 """
 
+import os
 import tempfile
 import unittest
 from datetime import date
@@ -247,3 +248,34 @@ class ExcludeTest(unittest.TestCase):
                     exclude=("Proposals/*/src/theme.typ", "Proposals/_template/*"),
                 )
             self.assertEqual(sorted(kept), ["Proposals/globex/src/proposal.typ"])
+
+
+class UntitledTitleTests(unittest.TestCase):
+    def test_untitled_files_take_their_title_from_the_text(self):
+        uid = "Untitled-01C8BB7D-6901-474B-9FC6-DE05756B13AE"
+        self.assertEqual(indexer.file_title(f"Scratchpad/{uid}.txt", "\n\n  Call the bank re: wire\nmore"), "Call the bank re: wire")
+        self.assertEqual(indexer.file_title(f"Scratchpad/{uid}.md", "---\nid: x\ntitle: Q4 plan\n---\n# Body"), "Q4 plan")
+        self.assertEqual(indexer.file_title(f"Scratchpad/{uid}.md", "---\nid: x\n---\n## - [ ] Ship it"), "Ship it")
+        self.assertEqual(indexer.file_title(f"Scratchpad/{uid}.txt", ""), uid)
+
+    def test_named_files_keep_their_filename(self):
+        self.assertEqual(indexer.file_title("Areas/Untitled ideas.md", "---\ntitle: Other\n---\nx"), "Untitled ideas")
+        self.assertEqual(indexer.file_title("Scratchpad/groceries.txt", "Grocery run"), "groceries")
+
+
+class OpenWithTests(unittest.TestCase):
+    def test_only_existing_note_mounts_map_to_an_app(self):
+        from vault_mcp import launcher
+        with mock.patch.object(indexer, "NOTE_MOUNTS", [("Scratchpad", Path("/tmp/notes"))]):
+            self.assertEqual(launcher.parse_open_with(f"Scratchpad=com.cx.txt{os.pathsep}Nope=com.x"), [(Path("/tmp/notes"), "com.cx.txt")])
+
+    def test_a_hit_in_the_mount_opens_in_that_app(self):
+        from vault_mcp import launcher
+        with tempfile.TemporaryDirectory() as d:
+            note = Path(d) / "a.txt"
+            note.write_text("x")
+            with mock.patch.object(launcher, "OPEN_WITH", [(Path(d), "com.cx.txt")]), \
+                 mock.patch.object(launcher.subprocess, "run") as run:
+                run.return_value.returncode = 0
+                launcher.open_file(str(note))
+            self.assertEqual(run.call_args[0][0], ["open", "-b", "com.cx.txt", str(note)])

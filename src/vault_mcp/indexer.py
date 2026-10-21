@@ -381,11 +381,29 @@ def chunk_html(raw: str) -> list[tuple[str, str]]:
     return _pieces(sections)
 
 
+# TextEdit's (and txt's) name for a note nobody named: "Untitled-<UUID>".
+UNTITLED_NAME = re.compile(r"^Untitled-[0-9A-Fa-f]{8}(-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}$")
+
+
 def file_title(rel_path: str, text: str) -> str:
-    """What the document calls itself: an HTML page's <title>, else its filename."""
+    """What the document calls itself: an HTML page's <title>, else its filename.
+
+    A file named "Untitled-<UUID>" has a filename that says nothing, so it's
+    titled by its front-matter `title`, else its first line of text.
+    """
     if Path(rel_path).suffix.lower() in HTML_SUFFIXES:
         return html_title(text) or _page_name(rel_path)
-    return Path(rel_path).stem
+    stem = Path(rel_path).stem
+    if UNTITLED_NAME.match(stem):
+        frontmatter, body = split_frontmatter(text)
+        title = frontmatter.get("title")
+        if isinstance(title, str) and title.strip():
+            return title.strip()
+        for line in body.splitlines():
+            line = re.sub(r"^[#>*\-\s]+|\[[ xX]\]\s*", "", line).strip()
+            if line:
+                return line[:80]
+    return stem
 
 
 def backfill_titles(store: Store, files: dict[str, Path] | None = None) -> int:

@@ -37,7 +37,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import date, datetime
 from pathlib import Path
 
-from . import DB_PATH, VAULT_PATH, media
+from . import DB_PATH, OPEN_WITH_SPEC, VAULT_PATH, indexer, media
 from .indexer import HTML_SUFFIXES, INDEX_NAMES, html_title, mount_status
 
 LOG_PATH = Path(os.environ.get("VAULT_MCP_LAUNCHER_LOG", "~/.local/state/vault-mcp/launcher.jsonl")).expanduser()
@@ -441,6 +441,26 @@ def rendered_twin(path: Path) -> Path | None:
 VLC = Path("/Applications/VLC.app/Contents/MacOS/VLC")
 
 
+def parse_open_with(spec: str) -> list[tuple[Path, str]]:
+    """ "Mount=bundle.id" pairs -> [(mount folder, bundle id)], for note mounts that exist."""
+    folders = dict(indexer.NOTE_MOUNTS)
+    pairs = []
+    for name, bundle in indexer.parse_mounts(spec):
+        if name in folders and str(bundle).strip():
+            pairs.append((folders[name], str(bundle).strip()))
+    return pairs
+
+
+def _inside(path: Path, root: Path) -> bool:
+    try:
+        return path.resolve().is_relative_to(root.resolve())
+    except OSError:
+        return False
+
+
+OPEN_WITH = parse_open_with(OPEN_WITH_SPEC)
+
+
 def open_file(abs_path: str, at: int | None = None) -> None:
     """Vault markdown in Obsidian, HTML in Onyx, a built artifact over its source, else the default app.
 
@@ -457,7 +477,10 @@ def open_file(abs_path: str, at: int | None = None) -> None:
         in_vault = path.resolve().is_relative_to(VAULT_PATH.resolve())
     except OSError:
         in_vault = False
-    if suffix == ".md" and in_vault:
+    app = next((bundle for root, bundle in OPEN_WITH if _inside(path, root)), None)
+    if app:
+        target = ["open", "-b", app, str(path)]
+    elif suffix == ".md" and in_vault:
         target = ["open", "obsidian://open?path=" + urllib.parse.quote(str(path), safe="")]
     elif suffix in HTML_SUFFIXES:
         target = ["open", "-b", "com.cx.onyx", str(path)]

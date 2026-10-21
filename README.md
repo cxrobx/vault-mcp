@@ -206,6 +206,7 @@ their next search.
 | `VAULT_MCP_MOUNTS` | `Artifacts=~/Documents/Artifacts` | Extra folders indexed beside the vault: `Name=/path` pairs joined by `:`. Their HTML pages appear under `Name/…` (so `folder="Name"` searches just them). A missing folder is skipped; `""` turns mounts off. |
 | `VAULT_MCP_NOTE_MOUNTS` | *(none)* | Same `Name=/path` shape, but walked the way the vault is: markdown **and** HTML at any depth. For documents that live outside the vault — a client folder, or the folder of repo docs that `scripts/link-repo-docs.sh` builds. |
 | `VAULT_MCP_TEXT_SUFFIXES` | *(none)* | Extra plain-text suffixes a note mount indexes beside `.md`, e.g. `.typ`. |
+| `VAULT_MCP_OPEN_WITH` | *(none)* | Which app opens a launcher hit from a note mount, as `Mount=bundle.id` pairs (`Scratchpad=com.cx.txt`). Otherwise hits open in the default app. |
 | `VAULT_MCP_EXCLUDE` | *(none)* | Index paths to leave out, as fnmatch globs (`Proposals/*/src/theme.typ`). Note `*` spans `/`, so `Name/*` excludes a whole subtree. |
 | `VAULT_MCP_DB` | `<repo>/data/index.db` | One DB per instance; don't share it between two servers. |
 | `VAULT_MCP_OLLAMA` | `http://localhost:11434` | |
@@ -221,7 +222,12 @@ vault = "~/notes"
 mounts = ["Artifacts=~/Documents/Artifacts"]
 note_mounts = ["Clients=~/clients", "Repos=~/.local/share/vault-mcp/repos"]
 text_suffixes = [".typ"]
+open_with = ["Scratchpad=com.cx.txt"]
 ```
+
+A plain-text or Markdown file named `Untitled-<UUID>` (TextEdit's and txt's name
+for a note nobody named) is titled by its front-matter `title`, else its first
+line, since the filename says nothing.
 
 This is not a convenience. Every entry point writes the same index, and a delta
 reindex **deletes whatever its own walk does not reach**. An MCP server

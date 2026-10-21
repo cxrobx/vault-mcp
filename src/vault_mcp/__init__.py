@@ -53,6 +53,10 @@ TEXT_SUFFIXES = tuple(
     )
     if s
 )
+# Which app opens a launcher hit from a given note mount: "Mount=bundle.id"
+# pairs, e.g. "Scratchpad=com.cx.txt", so a mount kept by another app opens
+# there instead of in the system's default editor. Missing app = default app.
+OPEN_WITH_SPEC = _setting("VAULT_MCP_OPEN_WITH", "open_with", "")
 # Index paths to leave out, as fnmatch globs against the index-relative path
 # ("Proposals/*/src/theme.typ"). NOTE fnmatch's "*" spans "/", so one star is
 # enough to cross folders and "Name/*" excludes a whole subtree.

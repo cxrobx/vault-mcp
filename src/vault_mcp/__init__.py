@@ -75,6 +75,10 @@ MEDIA_KINDS = frozenset(
     for k in _setting("VAULT_MCP_MEDIA", "media", "").replace(",", os.pathsep).split(os.pathsep)
     if k.strip()
 )
+# False on a machine that takes a finished index from another one (see
+# scripts/pull_index.py): every reindex then returns at once, so nothing here
+# embeds documents. Searching is unaffected; each query still embeds locally.
+INDEXING = _setting("VAULT_MCP_INDEXING", "indexing", "true").strip().lower() not in {"false", "0", "no", "off"}
 # whisper.cpp model for video transcripts. Missing = videos are indexed from
 # frames and sound alone, with no transcript text.
 WHISPER_MODEL = Path(

@@ -36,9 +36,18 @@ keeps the clip window exact and avoids the torchcodec dependency.
 for it goes ahead of the next media item, so a background reindex of a long
 video holds a search up by one item (~4 s for a 30 s window) at most.
 
+**Memory.** The model alone is ~5 GB and one 30 s video window peaks near
+10.5 GB (measured 2026-11-01), so VAULT_EMBED_MAX_GPU_GB (default 16) sits above
+that. Without a ceiling PyTorch let this process reach 66 GB on a 48 GB Mac and
+swap the machine to a standstill. Media work empties the MPS cache after each
+item, and an item that hits the ceiling is refused with a 400, which the indexer
+treats as one unreadable file rather than a dead server. A query keeps the cache
+so the next one stays fast; the idle exit returns that memory.
+
     embed_server/.venv/bin/python embed_server/server.py   # LaunchAgent com.cx.vault-embed
 """
 
+import gc
 import io
 import json
 import os
@@ -68,6 +77,7 @@ FRAME_W, FRAME_H = 448, 252
 PDF_DPI = 110
 MAX_MEDIA_SECONDS = 60  # one window; the client segments longer media
 IDLE_S = float(os.environ.get("VAULT_EMBED_IDLE_S", "600"))
+MAX_GPU_GB = float(os.environ.get("VAULT_EMBED_MAX_GPU_GB", "16"))
 
 
 def _roots() -> list[Path]:
@@ -103,6 +113,19 @@ def _get_model() -> SentenceTransformer:
         )
         print(f"vault-embed: model loaded in {time.monotonic() - t:.1f}s", file=sys.stderr, flush=True)
     return _model
+
+
+def _cap_gpu() -> None:
+    """Hold Metal memory to MAX_GPU_GB; going past it raises instead of swapping."""
+    if torch.backends.mps.is_available():
+        torch.mps.set_per_process_memory_fraction(
+            min(2.0, MAX_GPU_GB * 2**30 / torch.mps.recommended_max_memory()))
+
+
+def _release_gpu() -> None:
+    gc.collect()
+    if torch.backends.mps.is_available():
+        torch.mps.empty_cache()
 
 
 _gate = threading.Condition()
@@ -141,6 +164,8 @@ def _run(fn, is_query: bool):
     try:
         return fn(_get_model())
     finally:
+        if not is_query:
+            _release_gpu()  # still holding the gate, so nothing else is on the GPU
         with _gate:
             _last_used = time.monotonic()
             _busy = False
@@ -246,7 +271,12 @@ class Handler(BaseHTTPRequestHandler):
                 rows = []
                 for x in inputs:
                     item = x if isinstance(x, str) else _decode(x)
-                    rows.append(_run(lambda m: m.encode(item, normalize_embeddings=True), is_query=False))
+                    try:
+                        rows.append(_run(lambda m: m.encode(item, normalize_embeddings=True), is_query=False))
+                    except RuntimeError as exc:
+                        if "out of memory" not in str(exc).lower():
+                            raise
+                        raise ValueError(f"over the {MAX_GPU_GB:g} GB GPU limit") from exc
                 vecs = np.vstack(rows)
             self._send(200, {"model": MODEL_NAME, "embeddings": np.asarray(vecs).tolist()})
         except (PermissionError, FileNotFoundError, ValueError, KeyError) as exc:
@@ -263,5 +293,6 @@ class Handler(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     print(f"vault-embed: {MODEL_ID} as '{MODEL_NAME}' on {HOST}:{PORT}; media roots {[str(r) for r in ROOTS]}",
           file=sys.stderr, flush=True)
+    _cap_gpu()
     threading.Thread(target=_exit_when_idle, daemon=True).start()
     ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()

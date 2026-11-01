@@ -24,7 +24,7 @@ from pathlib import Path
 import numpy as np
 import yaml
 
-from . import EXCLUDE_GLOBS, MEDIA_KINDS, MOUNTS_SPEC, NOTE_MOUNTS_SPEC, TEXT_SUFFIXES, VAULT_PATH
+from . import EXCLUDE_GLOBS, INDEXING, MEDIA_KINDS, MOUNTS_SPEC, NOTE_MOUNTS_SPEC, TEXT_SUFFIXES, VAULT_PATH
 from . import media
 from .embeddings import EMBED_DIM, MediaRejected, OllamaEmbedder
 from .store import Store
@@ -489,7 +489,13 @@ def reindex(
     One indexer at a time, machine-wide: a call that finds another running
     returns {"mode": "skipped"} instead of queueing behind it — the one
     already running will pick up whatever this call would have.
+
+    With `indexing = false` it returns before touching the model. That covers
+    all three callers (session start, the reindex_vault tool, the CLI), so a
+    machine that pulls its index can't embed documents by any route.
     """
+    if not INDEXING:
+        return {"mode": "skipped", "reason": "indexing is off on this machine"}
     with _reindex_lock, _index_flock(store.db_path) as acquired:
         if not acquired:
             return {"mode": "skipped", "reason": "another indexer is running"}

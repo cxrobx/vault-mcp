@@ -149,6 +149,16 @@ at every MCP server start, under a machine-wide lock: only one indexer runs at
 a time and the others skip. MCP servers notice another process's writes on
 their next search.
 
+**A second machine doesn't have to index.** Set `indexing = false` in its config
+and every reindex returns at once, whichever way it was started. Install
+`scripts/com.cx.vault-index-pull.plist` there and `scripts/pull_index.py` copies
+the laptop's index every 15 minutes, skipping quietly while the laptop is
+asleep or the index hasn't changed. Stored paths are relative, so the copy works
+on any machine with the same vault and mount names. Each search still embeds its
+query locally, because a query vector has to come from the same model: ~5 GB,
+released 10 idle minutes later. Search returns an error if the embed server is
+down.
+
 ### Storage
 
 - **Embeddings**: `POST /api/embed` on Ollama's API, with the model's own task
@@ -157,7 +167,9 @@ their next search.
   by `embed_server/` (LaunchAgent `com.cx.vault-embed`, `127.0.0.1:11436`)
   because Ollama doesn't carry it; on known-item search it took top-1 from
   32% to 56% over nomic-embed-text (`scripts/eval_embedder.py`). Going back to
-  nomic is `model`/`ollama` in `config.toml` plus a reindex. The server loads
+  nomic is `model`/`ollama` in `config.toml` plus a reindex. Its Metal memory is
+  capped by `VAULT_EMBED_MAX_GPU_GB` (default 16; a video window peaks near
+  10.5 GB), and a media item over the cap is skipped for that run. The server loads
   the model on its first request and exits after 10 idle minutes
   (`VAULT_EMBED_IDLE_S`), and launchd starts a fresh, empty one: ~330 MB idle
   instead of ~9.6 GB held warm, for a ~3 s first search after a quiet spell.

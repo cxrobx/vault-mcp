@@ -62,6 +62,19 @@ class WalkTest(unittest.TestCase):
             self.assertEqual(files, {})
 
 
+class IndexingOffTest(unittest.TestCase):
+    def test_reindex_returns_without_walking_or_embedding(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(Path(tmp) / "index.db")
+            emb = mock.Mock()
+            with mock.patch.object(indexer, "INDEXING", False), \
+                    mock.patch.object(indexer, "walk_vault") as walk:
+                out = indexer.reindex(store, emb, full=True)
+            self.assertEqual(out["mode"], "skipped")
+            walk.assert_not_called()
+            self.assertEqual(emb.mock_calls, [])
+
+
 class IndexMediaTest(unittest.TestCase):
     def _index(self, chunks=None, error=None):
         tmp = tempfile.TemporaryDirectory()

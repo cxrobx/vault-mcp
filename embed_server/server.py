@@ -38,9 +38,12 @@ video holds a search up by one item (~4 s for a 30 s window) at most.
 
 **Memory.** The model alone is ~5 GB and one 30 s video window peaks near
 10.5 GB (measured 2026-11-01), so VAULT_EMBED_MAX_GPU_GB (default 16) sits above
-that. Without a ceiling PyTorch let this process reach 66 GB on a 48 GB Mac and
-swap the machine to a standstill. Media work empties the MPS cache after each
-item, and an item that hits the ceiling is refused with a 400, which the indexer
+that. The MPS allocator keeps what each new input size needed, and transcript
+text makes nearly every video window a new size: about 0.65 GB per window, never
+returned, which reached 66 GB on a 48 GB Mac and swapped it to a standstill
+(2026-11-01). Identical inputs don't show it, so test with varied text. Media
+work therefore empties the cache after each item, which held 24 windows flat at
+5.4 GB. An item that hits the ceiling is refused with a 400, which the indexer
 treats as one unreadable file rather than a dead server. A query keeps the cache
 so the next one stays fast; the idle exit returns that memory.
 
